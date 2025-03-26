@@ -1,5 +1,17 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google';
+import useDrivePicker from 'react-google-drive-picker';
+import { Document, Page } from 'react-pdf';
+import { pdfjs } from 'pdfjs-dist';
 import './App.css';
+
+// Initialize PDF.js worker
+pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+
+// Google Drive API configuration
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
+const GOOGLE_API_KEY = process.env.REACT_APP_GOOGLE_API_KEY;
+const GOOGLE_APP_ID = process.env.REACT_APP_GOOGLE_APP_ID;
 
 function App() {
   const [files, setFiles] = useState([]);
@@ -9,6 +21,10 @@ function App() {
   const [progress, setProgress] = useState(0);
   const [conversionResults, setConversionResults] = useState([]);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
+  const [previews, setPreviews] = useState({});
+  
+  // Google Drive Picker setup
+  const [openPicker] = useDrivePicker();
   
   // Get conversion options based on file format
   const getConversionOptions = (format) => {
@@ -123,16 +139,109 @@ function App() {
     }
   };
   
+  // Handle Google Drive file selection
+  const handleOpenPicker = () => {
+    openPicker({
+      clientId: GOOGLE_CLIENT_ID,
+      developerKey: GOOGLE_API_KEY,
+      viewId: 'DOCS',
+      showUploadView: true,
+      showUploadFolders: true,
+      supportDrives: true,
+      multiselect: true,
+      callbackFunction: async (data) => {
+        if (data.action === 'picked') {
+          const pickedFiles = data.docs;
+          for (const file of pickedFiles) {
+            try {
+              const response = await fetch(file.downloadUrl);
+              const blob = await response.blob();
+              const fileObject = new File([blob], file.name, { type: file.mimeType });
+              handleFileUpload(fileObject);
+            } catch (err) {
+              console.error('Error downloading file from Google Drive:', err);
+              setError(`Error downloading file from Google Drive: ${err.message}`);
+            }
+          }
+        }
+      },
+    });
+  };
+  
+  // Save file to Google Drive
+  const handleSaveToGoogleDrive = async (downloadUrl, filename) => {
+    try {
+      const response = await fetch(downloadUrl);
+      const blob = await response.blob();
+      
+      const accessToken = gapi.auth.getToken().access_token;
+      const metadata = {
+        name: filename,
+        mimeType: blob.type,
+      };
+      
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+      form.append('file', blob);
+      
+      const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: form,
+      });
+      
+      if (!uploadResponse.ok) {
+        throw new Error('Failed to upload to Google Drive');
+      }
+      
+      const result = await uploadResponse.json();
+      console.log('File uploaded to Google Drive:', result);
+      
+    } catch (err) {
+      console.error('Error saving to Google Drive:', err);
+      setError(`Error saving to Google Drive: ${err.message}`);
+    }
+  };
+  
+  // Generate file preview
+  const generatePreview = async (file) => {
+    try {
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setPreviews(prev => ({
+            ...prev,
+            [file.name]: e.target.result
+          }));
+        };
+        reader.readAsDataURL(file);
+      } else if (file.type === 'application/pdf') {
+        const url = URL.createObjectURL(file);
+        setPreviews(prev => ({
+          ...prev,
+          [file.name]: url
+        }));
+      }
+    } catch (err) {
+      console.error('Error generating preview:', err);
+    }
+  };
+  
+  // Handle file upload (both local and Google Drive)
+  const handleFileUpload = async (file) => {
+    await generatePreview(file);
+    detectFileFormat(file);
+  };
+  
   // Detect file format
   const detectFileFormat = async (file) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
       
-      const backendUrl = process.env.REACT_APP_BACKEND_URL;
-      if (!backendUrl) {
-        throw new Error('Backend URL not configured');
-      }
+      const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8080';
       
       const data = await makeApiCall(`${backendUrl}/detect`, {
         method: 'POST',
@@ -145,6 +254,7 @@ function App() {
         name: file.name,
         format: data.format,
         selectedFormat: getConversionOptions(data.format)[0] || '',
+        compression: getDefaultCompression(data.format),
         status: 'pending',
         error: null,
         downloadUrl: null
@@ -155,6 +265,30 @@ function App() {
       console.error('Format detection error:', err);
       setError(`Error detecting format for ${file.name}: ${err.message}`);
     }
+  };
+  
+  // Get default compression settings based on format
+  const getDefaultCompression = (format) => {
+    switch (format.toUpperCase()) {
+      case 'PDF':
+        return 'medium';
+      case 'JPG':
+      case 'JPEG':
+      case 'PNG':
+      case 'BMP':
+        return 80;
+      default:
+        return null;
+    }
+  };
+  
+  // Handle compression change
+  const handleCompressionChange = (id, value) => {
+    setFileInfos(prevInfos =>
+      prevInfos.map(info =>
+        info.id === id ? { ...info, compression: value } : info
+      )
+    );
   };
   
   // Handle format selection change
@@ -191,6 +325,7 @@ function App() {
       fileInfos.forEach((info, index) => {
         formData.append('files', info.file);
         formData.append(`format_${index}`, info.selectedFormat);
+        formData.append(`compression_${index}`, info.compression);
       });
       
       const response = await fetch(`${backendUrl}/convert-batch`, {
@@ -285,117 +420,187 @@ function App() {
   };
   
   return (
-    <div style={styles.container}>
-      <h1 style={styles.title}>File Format Detector & Converter</h1>
-      
-      {!isBackendConnected && (
-        <div style={styles.errorMessage}>
-          Warning: Cannot connect to backend service. Please check if the service is running.
-        </div>
-      )}
-      
-      {/* Drop zone */}
-      <div 
-        style={styles.dropZone}
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-      >
-        <p style={styles.dropText}>Drop Files Here</p>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <div style={styles.container}>
+        <h1 style={styles.title}>File Format Detector & Converter</h1>
         
-        {/* Browse button */}
-        <label style={styles.browseButton}>
-          Browse
-          <input 
-            type="file" 
-            multiple
-            style={styles.fileInput} 
-            onChange={handleFileSelect}
-          />
-        </label>
-      </div>
-      
-      {/* Loading indicator and progress bar */}
-      {isLoading && (
-        <div style={styles.progressSection}>
-          <p style={styles.message}>Converting files...</p>
-          <div style={styles.progressBar}>
-            <div 
-              style={{
-                ...styles.progressFill,
-                width: `${progress}%`
-              }}
-            />
+        {!isBackendConnected && (
+          <div style={styles.errorMessage}>
+            Warning: Cannot connect to backend service. Please check if the service is running.
           </div>
-          <p style={styles.progressText}>{progress}%</p>
-        </div>
-      )}
-      
-      {/* Error message */}
-      {error && <p style={styles.errorMessage}>{error}</p>}
-      
-      {/* File list */}
-      {fileInfos.length > 0 && (
-        <div style={styles.fileList}>
-          {fileInfos.map(info => (
-            <div key={info.id} style={styles.fileItem}>
-              <div style={styles.fileInfo}>
-                <span style={styles.fileName}>
-                  {info.name} ({info.format})
-                </span>
-                <button
-                  style={styles.removeButton}
-                  onClick={() => handleRemoveFile(info.id)}
-                  disabled={isLoading}
-                >
-                  ×
-                </button>
-              </div>
+        )}
+        
+        {/* Upload buttons */}
+        <div style={styles.uploadSection}>
+          <div 
+            style={styles.dropZone}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+          >
+            <p style={styles.dropText}>Drop Files Here</p>
+            
+            <div style={styles.uploadButtons}>
+              <label style={styles.browseButton}>
+                Browse Local Files
+                <input 
+                  type="file" 
+                  multiple
+                  style={styles.fileInput} 
+                  onChange={handleFileSelect}
+                />
+              </label>
               
-              {info.status === 'pending' ? (
-                <div style={styles.conversionControls}>
-                  <select
-                    value={info.selectedFormat}
-                    onChange={(e) => handleFormatChange(info.id, e.target.value)}
-                    style={styles.select}
+              <button
+                style={styles.driveButton}
+                onClick={handleOpenPicker}
+              >
+                Upload from Google Drive
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        {/* Progress section */}
+        {isLoading && (
+          <div style={styles.progressSection}>
+            <p style={styles.message}>Converting files...</p>
+            <div style={styles.progressBar}>
+              <div 
+                style={{
+                  ...styles.progressFill,
+                  width: `${progress}%`
+                }}
+              />
+            </div>
+            <p style={styles.progressText}>{progress}%</p>
+          </div>
+        )}
+        
+        {/* Error message */}
+        {error && <p style={styles.errorMessage}>{error}</p>}
+        
+        {/* File list */}
+        {fileInfos.length > 0 && (
+          <div style={styles.fileList}>
+            {fileInfos.map(info => (
+              <div key={info.id} style={styles.fileItem}>
+                {/* Preview section */}
+                {previews[info.name] && (
+                  <div style={styles.previewContainer}>
+                    {info.file.type.startsWith('image/') ? (
+                      <img
+                        src={previews[info.name]}
+                        alt={info.name}
+                        style={styles.preview}
+                      />
+                    ) : info.file.type === 'application/pdf' && (
+                      <Document file={previews[info.name]}>
+                        <Page pageNumber={1} width={200} />
+                      </Document>
+                    )}
+                  </div>
+                )}
+                
+                <div style={styles.fileInfo}>
+                  <span style={styles.fileName}>
+                    {info.name} ({info.format})
+                  </span>
+                  <button
+                    style={styles.removeButton}
+                    onClick={() => handleRemoveFile(info.id)}
                     disabled={isLoading}
                   >
-                    {getConversionOptions(info.format).map(format => (
-                      <option key={format} value={format}>
-                        Convert to {format}
-                      </option>
-                    ))}
-                  </select>
-                  {isLoading && (
-                    <div style={styles.individualProgress}>
-                      Converting: {info.progress || 0}%
-                    </div>
-                  )}
+                    ×
+                  </button>
                 </div>
-              ) : info.status === 'success' ? (
-                <button
-                  onClick={() => handleDownload(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
-                  style={styles.downloadButton}
-                  className="fadeIn"
-                >
-                  Download {info.selectedFormat} File
-                </button>
-              ) : (
-                <p style={styles.errorText}>{info.error}</p>
-              )}
-            </div>
-          ))}
-          
-          {/* Convert All button */}
-          <button
-            style={styles.convertAllButton}
-            onClick={handleConvertAll}
-            disabled={isLoading || fileInfos.length === 0}
-          >
-            {isLoading ? 'Converting...' : 'Convert All Files'}
-          </button>
-        </div>
-      )}
-    </div>
+                
+                {info.status === 'pending' ? (
+                  <div style={styles.conversionControls}>
+                    <select
+                      value={info.selectedFormat}
+                      onChange={(e) => handleFormatChange(info.id, e.target.value)}
+                      style={styles.select}
+                      disabled={isLoading}
+                    >
+                      {getConversionOptions(info.format).map(format => (
+                        <option key={format} value={format}>
+                          Convert to {format}
+                        </option>
+                      ))}
+                    </select>
+                    
+                    {/* Compression options */}
+                    {info.compression !== null && (
+                      <div style={styles.compressionControl}>
+                        {typeof info.compression === 'number' ? (
+                          <>
+                            <label>Quality: {info.compression}%</label>
+                            <input
+                              type="range"
+                              min="10"
+                              max="100"
+                              value={info.compression}
+                              onChange={(e) => handleCompressionChange(info.id, parseInt(e.target.value))}
+                              disabled={isLoading}
+                              style={styles.slider}
+                            />
+                          </>
+                        ) : (
+                          <select
+                            value={info.compression}
+                            onChange={(e) => handleCompressionChange(info.id, e.target.value)}
+                            style={styles.select}
+                            disabled={isLoading}
+                          >
+                            <option value="low">Low Compression</option>
+                            <option value="medium">Medium Compression</option>
+                            <option value="high">High Compression</option>
+                          </select>
+                        )}
+                      </div>
+                    )}
+                    
+                    {isLoading && (
+                      <div style={styles.individualProgress}>
+                        Converting: {info.progress || 0}%
+                      </div>
+                    )}
+                  </div>
+                ) : info.status === 'success' ? (
+                  <div style={styles.downloadSection}>
+                    <button
+                      onClick={() => handleDownload(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
+                      style={styles.downloadButton}
+                      className="fadeIn"
+                    >
+                      Download {info.selectedFormat} File
+                    </button>
+                    <button
+                      onClick={() => handleSaveToGoogleDrive(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
+                      style={styles.driveButton}
+                      className="fadeIn"
+                    >
+                      Save to Google Drive
+                    </button>
+                  </div>
+                ) : (
+                  <p style={styles.errorText}>{info.error}</p>
+                )}
+              </div>
+            ))}
+            
+            {/* Convert All button */}
+            <button
+              style={styles.convertAllButton}
+              onClick={handleConvertAll}
+              disabled={isLoading || fileInfos.length === 0}
+            >
+              {isLoading ? 'Converting...' : 'Convert All Files'}
+            </button>
+          </div>
+        )}
+      </div>
+    </GoogleOAuthProvider>
   );
 }
 
@@ -571,6 +776,55 @@ const styles = {
     marginTop: '8px',
     fontSize: '14px',
     color: '#666666',
+  },
+  uploadSection: {
+    width: '100%',
+    maxWidth: '600px',
+    marginBottom: '20px',
+  },
+  uploadButtons: {
+    display: 'flex',
+    gap: '10px',
+    marginTop: '20px',
+  },
+  driveButton: {
+    backgroundColor: '#4285f4',
+    color: 'white',
+    border: 'none',
+    padding: '8px 16px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+  },
+  previewContainer: {
+    width: '200px',
+    height: '200px',
+    marginBottom: '10px',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: '4px',
+    overflow: 'hidden',
+  },
+  preview: {
+    maxWidth: '100%',
+    maxHeight: '100%',
+    objectFit: 'contain',
+  },
+  compressionControl: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '5px',
+    marginTop: '10px',
+  },
+  slider: {
+    width: '100%',
+  },
+  downloadSection: {
+    display: 'flex',
+    gap: '10px',
+    marginTop: '10px',
   },
 };
 

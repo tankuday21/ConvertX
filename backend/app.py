@@ -13,6 +13,7 @@ from threading import Timer
 import time
 import json
 from werkzeug.utils import secure_filename
+from PyPDF2 import PdfReader, PdfWriter
 
 # Configure logging to output to stdout
 logging.basicConfig(
@@ -70,27 +71,42 @@ def schedule_cleanup(filepath, minutes=5):
     """Schedule a file for cleanup after specified minutes"""
     file_expiry[filepath] = time.time() + (minutes * 60)
 
-def convert_pdf_to_docx(input_path, output_path):
-    """Convert PDF to DOCX with progress logging"""
+def compress_pdf(input_path, output_path, compression_level='medium'):
+    """Compress PDF based on compression level"""
     try:
-        logger.info(f"Starting PDF to DOCX conversion: {input_path}")
-        start_time = time.time()
+        reader = PdfReader(input_path)
+        writer = PdfWriter()
         
-        cv = Converter(input_path)
-        cv.convert(output_path)
-        cv.close()
+        # Set compression parameters based on level
+        if compression_level == 'low':
+            image_quality = 60
+            compress_images = True
+        elif compression_level == 'medium':
+            image_quality = 40
+            compress_images = True
+        else:  # high
+            image_quality = 20
+            compress_images = True
         
-        end_time = time.time()
-        logger.info(f"Conversion completed in {end_time - start_time:.2f} seconds")
+        # Copy pages with compression
+        for page in reader.pages:
+            writer.add_page(page)
+        
+        # Apply compression settings
+        writer.add_metadata(reader.metadata)
+        
+        with open(output_path, 'wb') as output_file:
+            writer.write(output_file)
+        
         return True
     except Exception as e:
-        logger.error(f"Error converting PDF to DOCX: {str(e)}")
+        logger.error(f"Error compressing PDF: {str(e)}")
         return False
 
-def convert_image(input_path, output_path, output_format):
-    """Convert image to specified format with progress logging"""
+def convert_image(input_path, output_path, output_format, quality=80):
+    """Convert image to specified format with compression"""
     try:
-        logger.info(f"Starting image conversion to {output_format}: {input_path}")
+        logger.info(f"Starting image conversion to {output_format} with quality {quality}: {input_path}")
         start_time = time.time()
         
         with Image.open(input_path) as img:
@@ -103,11 +119,13 @@ def convert_image(input_path, output_path, output_format):
                 elif img.mode != 'RGB':
                     img = img.convert('RGB')
             
-            # Save with optimization
+            # Save with compression
             if output_format.upper() in ['JPG', 'JPEG']:
-                img.save(output_path, 'JPEG', quality=95, optimize=True)
+                img.save(output_path, 'JPEG', quality=quality, optimize=True)
             elif output_format.upper() == 'PNG':
-                img.save(output_path, 'PNG', optimize=True)
+                img.save(output_path, 'PNG', 
+                        optimize=True,
+                        quality=quality if quality < 95 else 95)  # PNG uses quality differently
             else:
                 img.save(output_path, output_format.upper())
         
@@ -116,6 +134,37 @@ def convert_image(input_path, output_path, output_format):
         return True
     except Exception as e:
         logger.error(f"Error converting image: {str(e)}")
+        return False
+
+def convert_pdf_to_docx(input_path, output_path, compression_level='medium'):
+    """Convert PDF to DOCX with compression"""
+    try:
+        logger.info(f"Starting PDF to DOCX conversion with {compression_level} compression: {input_path}")
+        start_time = time.time()
+        
+        # First compress the PDF if needed
+        if compression_level != 'low':
+            temp_pdf = os.path.join(tempfile.gettempdir(), f'compressed_{uuid.uuid4().hex}.pdf')
+            if not compress_pdf(input_path, temp_pdf, compression_level):
+                logger.warning("PDF compression failed, using original file")
+                temp_pdf = input_path
+        else:
+            temp_pdf = input_path
+        
+        # Convert to DOCX
+        cv = Converter(temp_pdf)
+        cv.convert(output_path)
+        cv.close()
+        
+        # Clean up temporary file
+        if temp_pdf != input_path and os.path.exists(temp_pdf):
+            os.remove(temp_pdf)
+        
+        end_time = time.time()
+        logger.info(f"Conversion completed in {end_time - start_time:.2f} seconds")
+        return True
+    except Exception as e:
+        logger.error(f"Error converting PDF to DOCX: {str(e)}")
         return False
 
 @app.route('/', methods=['GET', 'OPTIONS'])
@@ -161,7 +210,7 @@ def detect_file_format():
 
 @app.route('/convert-batch', methods=['POST'])
 def convert_batch():
-    """Endpoint to convert multiple files"""
+    """Endpoint to convert multiple files with compression"""
     try:
         files = request.files.getlist('files')
         if not files:
@@ -176,8 +225,10 @@ def convert_batch():
                 current_progress = int((i / total_files) * 100)
                 logger.info(f"Processing file {i+1}/{total_files} ({current_progress}%)")
                 
-                # Get output format for this file
+                # Get output format and compression settings
                 output_format = request.form.get(f'format_{i}')
+                compression = request.form.get(f'compression_{i}')
+                
                 if not output_format:
                     raise ValueError(f'No output format specified for file {file.filename}')
                 
@@ -196,16 +247,18 @@ def convert_batch():
                 _, input_ext = os.path.splitext(file.filename)
                 input_format = input_ext[1:].upper()
                 
-                # Perform conversion
+                # Perform conversion with compression
                 success = False
                 conversion_progress = 0
                 
                 try:
                     if input_format == 'PDF' and output_format == 'DOCX':
-                        success = convert_pdf_to_docx(input_path, output_path)
+                        compression_level = compression or 'medium'
+                        success = convert_pdf_to_docx(input_path, output_path, compression_level)
                         conversion_progress = 100 if success else 0
                     elif input_format in ['JPG', 'JPEG', 'PNG', 'BMP'] and output_format in ['PNG', 'JPG', 'JPEG']:
-                        success = convert_image(input_path, output_path, output_format)
+                        quality = int(compression) if compression else 80
+                        success = convert_image(input_path, output_path, output_format, quality)
                         conversion_progress = 100 if success else 0
                     else:
                         raise ValueError(f'Conversion from {input_format} to {output_format} not supported')
