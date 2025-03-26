@@ -174,7 +174,12 @@ function App() {
       const response = await fetch(downloadUrl);
       const blob = await response.blob();
       
-      const accessToken = gapi.auth.getToken().access_token;
+      // Get the access token from the Google OAuth client
+      const token = await window.gapi.auth.getToken();
+      if (!token || !token.access_token) {
+        throw new Error('Not authenticated with Google');
+      }
+      
       const metadata = {
         name: filename,
         mimeType: blob.type,
@@ -187,7 +192,7 @@ function App() {
       const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${token.access_token}`,
         },
         body: form,
       });
