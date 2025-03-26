@@ -6,6 +6,21 @@ function App() {
   const [fileInfo, setFileInfo] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [conversionOptions, setConversionOptions] = useState([]);
+  const [selectedFormat, setSelectedFormat] = useState('');
+  const [convertedFile, setConvertedFile] = useState(null);
+  
+  // Get conversion options based on file format
+  const getConversionOptions = (format) => {
+    switch (format) {
+      case 'PDF':
+        return ['DOCX', 'TXT'];
+      case 'JPG':
+        return ['PNG', 'BMP'];
+      default:
+        return [];
+    }
+  };
   
   // Handle file drop event
   const handleDrop = useCallback((e) => {
@@ -38,6 +53,7 @@ function App() {
   const uploadFile = async (file) => {
     setIsLoading(true);
     setError(null);
+    setConvertedFile(null);
     
     try {
       const formData = new FormData();
@@ -57,6 +73,44 @@ function App() {
         name: file.name,
         format: data.format
       });
+      
+      // Set conversion options based on detected format
+      const options = getConversionOptions(data.format);
+      setConversionOptions(options);
+      setSelectedFormat(options[0] || '');
+    } catch (err) {
+      setError('Error: ' + err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // Handle file conversion
+  const handleConvert = async () => {
+    if (!file || !selectedFormat) return;
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('outputFormat', selectedFormat);
+      
+      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/convert`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        throw new Error('Conversion failed');
+      }
+      
+      const data = await response.json();
+      setConvertedFile({
+        url: `${process.env.REACT_APP_BACKEND_URL}${data.downloadUrl}`,
+        format: selectedFormat
+      });
     } catch (err) {
       setError('Error: ' + err.message);
     } finally {
@@ -66,7 +120,7 @@ function App() {
   
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>File Format Detector</h1>
+      <h1 style={styles.title}>File Format Detector & Converter</h1>
       
       {/* Drop zone */}
       <div 
@@ -93,11 +147,49 @@ function App() {
       {/* Error message */}
       {error && <p style={styles.errorMessage}>{error}</p>}
       
-      {/* Result message */}
+      {/* File info and conversion options */}
       {fileInfo && !isLoading && (
-        <p style={styles.resultMessage} className="fadeIn">
-          File Uploaded: {fileInfo.name} ({fileInfo.format})
-        </p>
+        <div style={styles.conversionSection}>
+          <p style={styles.resultMessage} className="fadeIn">
+            File Uploaded: {fileInfo.name} ({fileInfo.format})
+          </p>
+          
+          {conversionOptions.length > 0 && (
+            <div style={styles.conversionControls}>
+              <select 
+                value={selectedFormat}
+                onChange={(e) => setSelectedFormat(e.target.value)}
+                style={styles.select}
+              >
+                {conversionOptions.map(format => (
+                  <option key={format} value={format}>
+                    Convert to {format}
+                  </option>
+                ))}
+              </select>
+              
+              <button 
+                onClick={handleConvert}
+                style={styles.convertButton}
+                disabled={isLoading}
+              >
+                Convert
+              </button>
+            </div>
+          )}
+          
+          {/* Download button for converted file */}
+          {convertedFile && (
+            <a 
+              href={convertedFile.url}
+              download
+              style={styles.downloadButton}
+              className="fadeIn"
+            >
+              Download Converted File ({convertedFile.format})
+            </a>
+          )}
+        </div>
       )}
     </div>
   );
@@ -158,6 +250,43 @@ const styles = {
     fontSize: '16px',
     color: '#008000',
     fontWeight: 'bold',
+  },
+  conversionSection: {
+    marginTop: '20px',
+    width: '100%',
+    maxWidth: '400px',
+  },
+  conversionControls: {
+    display: 'flex',
+    gap: '10px',
+    marginTop: '10px',
+  },
+  select: {
+    flex: 1,
+    padding: '8px',
+    borderRadius: '5px',
+    border: '1px solid #cccccc',
+    fontSize: '16px',
+  },
+  convertButton: {
+    backgroundColor: '#4CAF50',
+    color: 'white',
+    border: 'none',
+    padding: '8px 16px',
+    borderRadius: '5px',
+    cursor: 'pointer',
+    fontSize: '16px',
+  },
+  downloadButton: {
+    display: 'block',
+    backgroundColor: '#2196F3',
+    color: 'white',
+    textDecoration: 'none',
+    padding: '8px 16px',
+    borderRadius: '5px',
+    marginTop: '10px',
+    textAlign: 'center',
+    fontSize: '16px',
   },
 };
 
