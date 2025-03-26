@@ -29,6 +29,7 @@ function App() {
             'Content-Type': 'application/json',
           },
           mode: 'cors',
+          cache: 'no-cache',
         });
         
         if (response.ok) {
@@ -38,7 +39,8 @@ function App() {
           return true;
         }
         
-        throw new Error('Backend health check failed');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Backend health check failed');
       } catch (err) {
         console.error(`Backend connection attempt ${i + 1} failed:`, err);
         if (i === retries - 1) {
@@ -66,6 +68,7 @@ function App() {
         const response = await fetch(url, {
           ...options,
           mode: 'cors',
+          cache: 'no-cache',
           headers: {
             'Accept': 'application/json',
             ...options.headers,

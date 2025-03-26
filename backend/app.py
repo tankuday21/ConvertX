@@ -20,22 +20,26 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configure CORS to allow all origins and methods
+# Configure CORS with specific settings
 CORS(app, 
      resources={r"/*": {
-         "origins": "*",
+         "origins": ["https://convert-x.vercel.app", "http://localhost:3000"],
          "methods": ["GET", "POST", "OPTIONS"],
          "allow_headers": ["Content-Type", "Authorization", "Accept"],
          "expose_headers": ["Content-Type", "Authorization"],
+         "supports_credentials": False,
          "max_age": 3600
      }})
 
 @app.after_request
 def after_request(response):
     """Add CORS headers to every response"""
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    origin = request.headers.get('Origin')
+    if origin in ["https://convert-x.vercel.app", "http://localhost:3000"]:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+        response.headers.add('Access-Control-Max-Age', '3600')
     return response
 
 try:
@@ -94,9 +98,11 @@ def convert_jpg_to_png(input_path, output_path):
         logger.error(f"Error converting JPG to PNG: {str(e)}")
         return False
 
-@app.route('/')
+@app.route('/', methods=['GET', 'OPTIONS'])
 def health_check():
     """Health check endpoint"""
+    if request.method == 'OPTIONS':
+        return '', 204
     return jsonify({"status": "healthy"}), 200
 
 @app.route('/detect', methods=['POST'])
