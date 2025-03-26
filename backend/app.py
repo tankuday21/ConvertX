@@ -85,20 +85,35 @@ def convert_pdf_to_docx(input_path, output_path):
         logger.error(f"Error converting PDF to DOCX: {str(e)}")
         return False
 
-def convert_jpg_to_png(input_path, output_path):
-    """Convert JPG to PNG with progress logging"""
+def convert_image(input_path, output_path, output_format):
+    """Convert image to specified format with progress logging"""
     try:
-        logger.info(f"Starting JPG to PNG conversion: {input_path}")
+        logger.info(f"Starting image conversion to {output_format}: {input_path}")
         start_time = time.time()
         
         with Image.open(input_path) as img:
-            img.save(output_path, 'PNG', optimize=True)
+            # Convert to RGB if saving as JPEG
+            if output_format.upper() in ['JPG', 'JPEG']:
+                if img.mode in ('RGBA', 'LA'):
+                    background = Image.new('RGB', img.size, (255, 255, 255))
+                    background.paste(img, mask=img.split()[-1])
+                    img = background
+                elif img.mode != 'RGB':
+                    img = img.convert('RGB')
+            
+            # Save with optimization
+            if output_format.upper() in ['JPG', 'JPEG']:
+                img.save(output_path, 'JPEG', quality=95, optimize=True)
+            elif output_format.upper() == 'PNG':
+                img.save(output_path, 'PNG', optimize=True)
+            else:
+                img.save(output_path, output_format.upper())
         
         end_time = time.time()
         logger.info(f"Conversion completed in {end_time - start_time:.2f} seconds")
         return True
     except Exception as e:
-        logger.error(f"Error converting JPG to PNG: {str(e)}")
+        logger.error(f"Error converting image: {str(e)}")
         return False
 
 @app.route('/', methods=['GET', 'OPTIONS'])
@@ -172,8 +187,8 @@ def convert_file():
         success = False
         if input_format == 'PDF' and output_format == 'DOCX':
             success = convert_pdf_to_docx(input_path, output_path)
-        elif input_format == 'JPG' and output_format == 'PNG':
-            success = convert_jpg_to_png(input_path, output_path)
+        elif input_format in ['JPG', 'JPEG', 'PNG', 'BMP'] and output_format in ['PNG', 'JPG', 'JPEG']:
+            success = convert_image(input_path, output_path, output_format)
         else:
             return jsonify({'error': f'Conversion from {input_format} to {output_format} not supported'}), 400
         

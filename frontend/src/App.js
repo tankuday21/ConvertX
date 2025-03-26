@@ -91,11 +91,14 @@ function App() {
   
   // Get conversion options based on file format
   const getConversionOptions = (format) => {
-    switch (format) {
+    switch (format.toUpperCase()) {
       case 'PDF':
-        return ['DOCX', 'TXT'];
+        return ['DOCX'];
       case 'JPG':
-        return ['PNG', 'BMP'];
+      case 'JPEG':
+      case 'PNG':
+      case 'BMP':
+        return ['PNG', 'JPG', 'JPEG'];
       default:
         return [];
     }
