@@ -195,12 +195,19 @@ function App() {
         formData.append(`format_${index}`, info.selectedFormat);
       });
       
-      const data = await makeApiCall(`${backendUrl}/convert-batch`, {
+      const response = await fetch(`${backendUrl}/convert-batch`, {
         method: 'POST',
         body: formData,
       });
       
-      // Update file infos with results
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Conversion failed');
+      }
+      
+      const data = await response.json();
+      
+      // Update file infos with results and progress
       setFileInfos(prevInfos =>
         prevInfos.map(info => {
           const result = data.results.find(r => r.filename === info.name);
@@ -208,18 +215,45 @@ function App() {
             ...info,
             status: result.status,
             error: result.error || null,
-            downloadUrl: result.downloadUrl || null
+            downloadUrl: result.downloadUrl ? `${backendUrl}${result.downloadUrl}` : null,
+            progress: result.progress
           };
         })
       );
       
+      setProgress(100);
       setConversionResults(data.results);
     } catch (err) {
       console.error('Batch conversion error:', err);
       setError(`Error converting files: ${err.message}`);
     } finally {
       setIsLoading(false);
-      setProgress(100);
+    }
+  };
+  
+  // Update the download link handler
+  const handleDownload = async (downloadUrl, filename) => {
+    try {
+      const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+      
+      // Get the blob from the response
+      const blob = await response.blob();
+      
+      // Create a temporary link and trigger download
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename; // Use the original filename
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Download error:', err);
+      setError(`Error downloading file: ${err.message}`);
     }
   };
   
@@ -309,16 +343,20 @@ function App() {
                       </option>
                     ))}
                   </select>
+                  {isLoading && info.progress !== undefined && (
+                    <div style={styles.individualProgress}>
+                      Converting: {info.progress}%
+                    </div>
+                  )}
                 </div>
               ) : info.status === 'success' ? (
-                <a
-                  href={info.downloadUrl}
-                  download
+                <button
+                  onClick={() => handleDownload(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
                   style={styles.downloadButton}
                   className="fadeIn"
                 >
                   Download {info.selectedFormat} File
-                </a>
+                </button>
               ) : (
                 <p style={styles.errorText}>{info.error}</p>
               )}
@@ -331,7 +369,7 @@ function App() {
             onClick={handleConvertAll}
             disabled={isLoading || fileInfos.length === 0}
           >
-            Convert All Files
+            {isLoading ? 'Converting...' : 'Convert All Files'}
           </button>
         </div>
       )}
@@ -422,15 +460,18 @@ const styles = {
     fontSize: '16px',
   },
   downloadButton: {
-    display: 'block',
-    backgroundColor: '#2196F3',
+    backgroundColor: '#4CAF50',
     color: 'white',
-    textDecoration: 'none',
+    border: 'none',
     padding: '8px 16px',
-    borderRadius: '5px',
-    marginTop: '10px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    marginTop: '8px',
+    width: '100%',
     textAlign: 'center',
-    fontSize: '16px',
+    textDecoration: 'none',
+    display: 'block',
   },
   fileList: {
     width: '100%',
@@ -503,6 +544,11 @@ const styles = {
     color: '#ff0000',
     margin: '5px 0',
     fontSize: '14px',
+  },
+  individualProgress: {
+    marginTop: '8px',
+    fontSize: '14px',
+    color: '#666666',
   },
 };
 

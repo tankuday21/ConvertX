@@ -12,6 +12,7 @@ import sys
 from threading import Timer
 import time
 import json
+from werkzeug.utils import secure_filename
 
 # Configure logging to output to stdout
 logging.basicConfig(
@@ -167,20 +168,28 @@ def convert_batch():
             return jsonify({'error': 'No files provided'}), 400
         
         results = []
+        total_files = len(files)
+        
         for i, file in enumerate(files):
             try:
+                # Calculate progress percentage
+                progress = int((i / total_files) * 100)
+                logger.info(f"Processing file {i+1}/{total_files} ({progress}%)")
+                
                 # Get output format for this file
                 output_format = request.form.get(f'format_{i}')
                 if not output_format:
                     raise ValueError(f'No output format specified for file {file.filename}')
                 
-                # Save input file
-                input_filename = str(uuid.uuid4()) + '_' + file.filename
+                # Save input file with safe filename
+                safe_filename = secure_filename(file.filename)
+                input_filename = f"{uuid.uuid4().hex}_{safe_filename}"
                 input_path = os.path.join(UPLOAD_DIR, input_filename)
                 file.save(input_path)
                 
-                # Generate output filename
-                output_filename = f"converted_{uuid.uuid4().hex[:8]}.{output_format.lower()}"
+                # Generate output filename preserving original name
+                name_without_ext = os.path.splitext(safe_filename)[0]
+                output_filename = f"{name_without_ext}_{uuid.uuid4().hex[:8]}.{output_format.lower()}"
                 output_path = os.path.join(CONVERTED_DIR, output_filename)
                 
                 # Get input format
@@ -205,14 +214,16 @@ def convert_batch():
                         'filename': file.filename,
                         'status': 'success',
                         'downloadUrl': f"/download/{output_filename}",
-                        'error': None
+                        'error': None,
+                        'progress': progress
                     })
                 else:
                     results.append({
                         'filename': file.filename,
                         'status': 'error',
                         'downloadUrl': None,
-                        'error': 'Conversion failed'
+                        'error': 'Conversion failed',
+                        'progress': progress
                     })
                 
             except Exception as e:
@@ -221,12 +232,18 @@ def convert_batch():
                     'filename': file.filename,
                     'status': 'error',
                     'downloadUrl': None,
-                    'error': str(e)
+                    'error': str(e),
+                    'progress': progress
                 })
+        
+        # Final progress update
+        logger.info("Batch conversion completed (100%)")
         
         return jsonify({
             'success': True,
             'results': results,
+            'totalFiles': total_files,
+            'progress': 100,
             'message': f'Processed {len(files)} files'
         })
     
@@ -243,15 +260,29 @@ def download_file(filename):
             logger.error(f"File not found: {file_path}")
             return jsonify({'error': 'File not found'}), 404
         
+        # Determine the correct MIME type
+        mime_type, _ = mimetypes.guess_type(filename)
+        if not mime_type:
+            mime_type = 'application/octet-stream'
+        
+        # Ensure the MIME type is set correctly for common formats
+        ext = os.path.splitext(filename)[1].lower()
+        if ext == '.docx':
+            mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif ext == '.jpg' or ext == '.jpeg':
+            mime_type = 'image/jpeg'
+        elif ext == '.png':
+            mime_type = 'image/png'
+        
         return send_file(
             file_path,
             as_attachment=True,
             download_name=filename,
-            mimetype='application/octet-stream'
+            mimetype=mime_type
         )
     except Exception as e:
         logger.error(f"Error serving file {filename}: {str(e)}")
-        return jsonify({'error': 'File not found'}), 404
+        return jsonify({'error': str(e)}), 500
 
 # Start periodic cleanup
 def periodic_cleanup():
