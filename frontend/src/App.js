@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import './App.css';
 
 function App() {
@@ -9,6 +9,39 @@ function App() {
   const [conversionOptions, setConversionOptions] = useState([]);
   const [selectedFormat, setSelectedFormat] = useState('');
   const [convertedFile, setConvertedFile] = useState(null);
+  const [isBackendConnected, setIsBackendConnected] = useState(false);
+  
+  // Check backend connection on component mount
+  useEffect(() => {
+    const checkBackendConnection = async () => {
+      try {
+        const backendUrl = process.env.REACT_APP_BACKEND_URL;
+        if (!backendUrl) {
+          throw new Error('Backend URL not configured');
+        }
+        
+        const response = await fetch(`${backendUrl}/`, {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Accept': 'application/json',
+          }
+        });
+        
+        if (response.ok) {
+          setIsBackendConnected(true);
+        } else {
+          throw new Error('Backend health check failed');
+        }
+      } catch (err) {
+        console.error('Backend connection error:', err);
+        setError(`Backend connection error: ${err.message}`);
+        setIsBackendConnected(false);
+      }
+    };
+    
+    checkBackendConnection();
+  }, []);
   
   // Get conversion options based on file format
   const getConversionOptions = (format) => {
@@ -67,6 +100,10 @@ function App() {
       const response = await fetch(`${backendUrl}/detect`, {
         method: 'POST',
         body: formData,
+        credentials: 'include',
+        headers: {
+          'Accept': 'application/json',
+        }
       });
       
       if (!response.ok) {
@@ -112,6 +149,10 @@ function App() {
       const response = await fetch(`${backendUrl}/convert`, {
         method: 'POST',
         body: formData,
+        credentials: 'include',
+        headers: {
+          'Accept': 'application/json',
+        }
       });
       
       if (!response.ok) {
@@ -135,6 +176,12 @@ function App() {
   return (
     <div style={styles.container}>
       <h1 style={styles.title}>File Format Detector & Converter</h1>
+      
+      {!isBackendConnected && (
+        <div style={styles.errorMessage}>
+          Warning: Cannot connect to backend service. Please check if the service is running.
+        </div>
+      )}
       
       {/* Drop zone */}
       <div 
