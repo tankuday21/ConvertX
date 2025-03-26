@@ -22,7 +22,6 @@ function App() {
         
         const response = await fetch(`${backendUrl}/`, {
           method: 'GET',
-          credentials: 'include',
           headers: {
             'Accept': 'application/json',
           }
@@ -100,7 +99,6 @@ function App() {
       const response = await fetch(`${backendUrl}/detect`, {
         method: 'POST',
         body: formData,
-        credentials: 'include',
         headers: {
           'Accept': 'application/json',
         }
@@ -149,7 +147,6 @@ function App() {
       const response = await fetch(`${backendUrl}/convert`, {
         method: 'POST',
         body: formData,
-        credentials: 'include',
         headers: {
           'Accept': 'application/json',
         }

@@ -8,26 +8,52 @@ from PIL import Image
 import uuid
 import tempfile
 import shutil
+import sys
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging to output to stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
 # Configure CORS with specific settings
 CORS(app, resources={
     r"/*": {
-        "origins": ["*"],
+        "origins": "*",
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
     }
 })
 
-# Create a temporary directory for file processing
-TEMP_DIR = tempfile.mkdtemp()
-CONVERTED_DIR = os.path.join(TEMP_DIR, 'converted')
-os.makedirs(CONVERTED_DIR, exist_ok=True)
+try:
+    # Create temporary directories in /tmp for Railway compatibility
+    TEMP_DIR = os.path.join(tempfile.gettempdir(), 'convertx_temp')
+    CONVERTED_DIR = os.path.join(TEMP_DIR, 'converted')
+    
+    # Clean up existing directories if they exist
+    if os.path.exists(TEMP_DIR):
+        shutil.rmtree(TEMP_DIR)
+    
+    # Create fresh directories
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(CONVERTED_DIR, exist_ok=True)
+    
+    logger.info(f"Created temporary directories: {TEMP_DIR}, {CONVERTED_DIR}")
+except Exception as e:
+    logger.error(f"Failed to create temporary directories: {str(e)}")
+    # Don't fail startup, we'll create directories on-demand
+
+def ensure_directories():
+    """Ensure temporary directories exist"""
+    try:
+        os.makedirs(TEMP_DIR, exist_ok=True)
+        os.makedirs(CONVERTED_DIR, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Error ensuring directories: {str(e)}")
 
 def cleanup_files():
     """Clean up temporary files"""
@@ -70,6 +96,7 @@ def detect_file_format():
     Endpoint to detect the format of an uploaded file.
     Accepts a file via POST request and returns the detected format.
     """
+    ensure_directories()  # Ensure directories exist
     try:
         # Check if a file was included in the request
         if 'file' not in request.files:
@@ -119,6 +146,7 @@ def convert_file():
     Endpoint to convert uploaded file to specified format.
     Accepts a file and target format via POST request.
     """
+    ensure_directories()  # Ensure directories exist
     try:
         if 'file' not in request.files or 'outputFormat' not in request.form:
             return jsonify({'error': 'Missing file or output format'}), 400
