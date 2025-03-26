@@ -11,6 +11,7 @@ import shutil
 import sys
 from threading import Timer
 import time
+import json
 
 # Configure logging to output to stdout
 logging.basicConfig(
@@ -157,57 +158,80 @@ def detect_file_format():
         logger.error(f"Error in detect_file_format: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/convert', methods=['POST'])
-def convert_file():
-    """Endpoint to convert files"""
+@app.route('/convert-batch', methods=['POST'])
+def convert_batch():
+    """Endpoint to convert multiple files"""
     try:
-        if 'file' not in request.files or 'outputFormat' not in request.form:
-            return jsonify({'error': 'Missing file or output format'}), 400
+        files = request.files.getlist('files')
+        if not files:
+            return jsonify({'error': 'No files provided'}), 400
         
-        file = request.files['file']
-        output_format = request.form['outputFormat'].upper()
+        results = []
+        for i, file in enumerate(files):
+            try:
+                # Get output format for this file
+                output_format = request.form.get(f'format_{i}')
+                if not output_format:
+                    raise ValueError(f'No output format specified for file {file.filename}')
+                
+                # Save input file
+                input_filename = str(uuid.uuid4()) + '_' + file.filename
+                input_path = os.path.join(UPLOAD_DIR, input_filename)
+                file.save(input_path)
+                
+                # Generate output filename
+                output_filename = f"converted_{uuid.uuid4().hex[:8]}.{output_format.lower()}"
+                output_path = os.path.join(CONVERTED_DIR, output_filename)
+                
+                # Get input format
+                _, input_ext = os.path.splitext(file.filename)
+                input_format = input_ext[1:].upper()
+                
+                # Perform conversion
+                success = False
+                if input_format == 'PDF' and output_format == 'DOCX':
+                    success = convert_pdf_to_docx(input_path, output_path)
+                elif input_format in ['JPG', 'JPEG', 'PNG', 'BMP'] and output_format in ['PNG', 'JPG', 'JPEG']:
+                    success = convert_image(input_path, output_path, output_format)
+                else:
+                    raise ValueError(f'Conversion from {input_format} to {output_format} not supported')
+                
+                # Schedule cleanup
+                schedule_cleanup(input_path)
+                schedule_cleanup(output_path, minutes=10)
+                
+                if success:
+                    results.append({
+                        'filename': file.filename,
+                        'status': 'success',
+                        'downloadUrl': f"/download/{output_filename}",
+                        'error': None
+                    })
+                else:
+                    results.append({
+                        'filename': file.filename,
+                        'status': 'error',
+                        'downloadUrl': None,
+                        'error': 'Conversion failed'
+                    })
+                
+            except Exception as e:
+                logger.error(f"Error converting file {file.filename}: {str(e)}")
+                results.append({
+                    'filename': file.filename,
+                    'status': 'error',
+                    'downloadUrl': None,
+                    'error': str(e)
+                })
         
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
-        # Save input file
-        input_filename = str(uuid.uuid4()) + '_' + file.filename
-        input_path = os.path.join(UPLOAD_DIR, input_filename)
-        file.save(input_path)
-        
-        # Generate output filename
-        output_filename = f"converted_{uuid.uuid4().hex[:8]}.{output_format.lower()}"
-        output_path = os.path.join(CONVERTED_DIR, output_filename)
-        
-        # Get input format
-        _, input_ext = os.path.splitext(file.filename)
-        input_format = input_ext[1:].upper()
-        
-        # Perform conversion
-        success = False
-        if input_format == 'PDF' and output_format == 'DOCX':
-            success = convert_pdf_to_docx(input_path, output_path)
-        elif input_format in ['JPG', 'JPEG', 'PNG', 'BMP'] and output_format in ['PNG', 'JPG', 'JPEG']:
-            success = convert_image(input_path, output_path, output_format)
-        else:
-            return jsonify({'error': f'Conversion from {input_format} to {output_format} not supported'}), 400
-        
-        # Schedule cleanup for both files
-        schedule_cleanup(input_path)
-        schedule_cleanup(output_path, minutes=10)  # Keep converted files longer
-        
-        if success:
-            download_url = f"/download/{output_filename}"
-            return jsonify({
-                'success': True,
-                'downloadUrl': download_url,
-                'message': f'File converted successfully to {output_format}'
-            })
-        else:
-            return jsonify({'error': 'Conversion failed'}), 500
+        return jsonify({
+            'success': True,
+            'results': results,
+            'message': f'Processed {len(files)} files'
+        })
     
     except Exception as e:
-        logger.error(f"Error in convert_file: {str(e)}")
+        logger.error(f"Error in convert_batch: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')

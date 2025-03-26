@@ -2,14 +2,28 @@ import React, { useState, useCallback, useEffect } from 'react';
 import './App.css';
 
 function App() {
-  const [file, setFile] = useState(null);
-  const [fileInfo, setFileInfo] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [fileInfos, setFileInfos] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [conversionOptions, setConversionOptions] = useState([]);
-  const [selectedFormat, setSelectedFormat] = useState('');
-  const [convertedFile, setConvertedFile] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [conversionResults, setConversionResults] = useState([]);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
+  
+  // Get conversion options based on file format
+  const getConversionOptions = (format) => {
+    switch (format.toUpperCase()) {
+      case 'PDF':
+        return ['DOCX'];
+      case 'JPG':
+      case 'JPEG':
+      case 'PNG':
+      case 'BMP':
+        return ['PNG', 'JPG', 'JPEG'];
+      default:
+        return [];
+    }
+  };
   
   // Function to check backend connection with retries
   const checkBackendConnection = async (retries = 3) => {
@@ -47,7 +61,6 @@ function App() {
           setError(`Backend connection error: ${err.message}. Please refresh the page to try again.`);
           setIsBackendConnected(false);
         }
-        // Wait before retrying
         if (i < retries - 1) {
           await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
         }
@@ -89,54 +102,29 @@ function App() {
     }
   };
   
-  // Get conversion options based on file format
-  const getConversionOptions = (format) => {
-    switch (format.toUpperCase()) {
-      case 'PDF':
-        return ['DOCX'];
-      case 'JPG':
-      case 'JPEG':
-      case 'PNG':
-      case 'BMP':
-        return ['PNG', 'JPG', 'JPEG'];
-      default:
-        return [];
-    }
-  };
-  
   // Handle file drop event
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
     
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const droppedFile = e.dataTransfer.files[0];
-      setFile(droppedFile);
-      uploadFile(droppedFile);
+      const droppedFiles = Array.from(e.dataTransfer.files);
+      setFiles(prevFiles => [...prevFiles, ...droppedFiles]);
+      droppedFiles.forEach(file => detectFileFormat(file));
     }
   }, []);
   
   // Handle file selection via browse button
   const handleFileSelect = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selectedFile = e.target.files[0];
-      setFile(selectedFile);
-      uploadFile(selectedFile);
+      const selectedFiles = Array.from(e.target.files);
+      setFiles(prevFiles => [...prevFiles, ...selectedFiles]);
+      selectedFiles.forEach(file => detectFileFormat(file));
     }
   };
   
-  // Prevent default behavior for drag events
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-  };
-  
-  // Upload file to backend for format detection
-  const uploadFile = async (file) => {
-    setIsLoading(true);
-    setError(null);
-    setConvertedFile(null);
-    
+  // Detect file format
+  const detectFileFormat = async (file) => {
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -151,58 +139,94 @@ function App() {
         body: formData,
       });
       
-      setFileInfo({
+      const fileInfo = {
+        id: Math.random().toString(36).substr(2, 9),
+        file,
         name: file.name,
-        format: data.format
-      });
+        format: data.format,
+        selectedFormat: getConversionOptions(data.format)[0] || '',
+        status: 'pending',
+        error: null,
+        downloadUrl: null
+      };
       
-      const options = getConversionOptions(data.format);
-      setConversionOptions(options);
-      setSelectedFormat(options[0] || '');
+      setFileInfos(prevInfos => [...prevInfos, fileInfo]);
     } catch (err) {
-      console.error('Upload error:', err);
-      setError(`Error: ${err.message}`);
-      // Try to reconnect to backend
-      checkBackendConnection();
-    } finally {
-      setIsLoading(false);
+      console.error('Format detection error:', err);
+      setError(`Error detecting format for ${file.name}: ${err.message}`);
     }
   };
   
-  // Handle file conversion
-  const handleConvert = async () => {
-    if (!file || !selectedFormat) return;
+  // Handle format selection change
+  const handleFormatChange = (id, format) => {
+    setFileInfos(prevInfos =>
+      prevInfos.map(info =>
+        info.id === id ? { ...info, selectedFormat: format } : info
+      )
+    );
+  };
+  
+  // Remove file from list
+  const handleRemoveFile = (id) => {
+    setFileInfos(prevInfos => prevInfos.filter(info => info.id !== id));
+    setFiles(prevFiles => prevFiles.filter((_, index) => 
+      fileInfos.findIndex(info => info.id === id) !== index
+    ));
+  };
+  
+  // Convert all files
+  const handleConvertAll = async () => {
+    if (fileInfos.length === 0) return;
     
     setIsLoading(true);
     setError(null);
+    setProgress(0);
+    setConversionResults([]);
     
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('outputFormat', selectedFormat);
-      
       const backendUrl = process.env.REACT_APP_BACKEND_URL;
       if (!backendUrl) {
         throw new Error('Backend URL not configured');
       }
       
-      const data = await makeApiCall(`${backendUrl}/convert`, {
+      const formData = new FormData();
+      fileInfos.forEach((info, index) => {
+        formData.append('files', info.file);
+        formData.append(`format_${index}`, info.selectedFormat);
+      });
+      
+      const data = await makeApiCall(`${backendUrl}/convert-batch`, {
         method: 'POST',
         body: formData,
       });
       
-      setConvertedFile({
-        url: `${backendUrl}${data.downloadUrl}`,
-        format: selectedFormat
-      });
+      // Update file infos with results
+      setFileInfos(prevInfos =>
+        prevInfos.map(info => {
+          const result = data.results.find(r => r.filename === info.name);
+          return {
+            ...info,
+            status: result.status,
+            error: result.error || null,
+            downloadUrl: result.downloadUrl || null
+          };
+        })
+      );
+      
+      setConversionResults(data.results);
     } catch (err) {
-      console.error('Conversion error:', err);
-      setError(`Error: ${err.message}`);
-      // Try to reconnect to backend
-      checkBackendConnection();
+      console.error('Batch conversion error:', err);
+      setError(`Error converting files: ${err.message}`);
     } finally {
       setIsLoading(false);
+      setProgress(100);
     }
+  };
+  
+  // Prevent default behavior for drag events
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
   };
   
   return (
@@ -228,60 +252,87 @@ function App() {
           Browse
           <input 
             type="file" 
+            multiple
             style={styles.fileInput} 
             onChange={handleFileSelect}
           />
         </label>
       </div>
       
-      {/* Loading indicator */}
-      {isLoading && <p style={styles.message}>Processing...</p>}
+      {/* Loading indicator and progress bar */}
+      {isLoading && (
+        <div style={styles.progressSection}>
+          <p style={styles.message}>Converting files...</p>
+          <div style={styles.progressBar}>
+            <div 
+              style={{
+                ...styles.progressFill,
+                width: `${progress}%`
+              }}
+            />
+          </div>
+          <p style={styles.progressText}>{progress}%</p>
+        </div>
+      )}
       
       {/* Error message */}
       {error && <p style={styles.errorMessage}>{error}</p>}
       
-      {/* File info and conversion options */}
-      {fileInfo && !isLoading && (
-        <div style={styles.conversionSection}>
-          <p style={styles.resultMessage} className="fadeIn">
-            File Uploaded: {fileInfo.name} ({fileInfo.format})
-          </p>
-          
-          {conversionOptions.length > 0 && (
-            <div style={styles.conversionControls}>
-              <select 
-                value={selectedFormat}
-                onChange={(e) => setSelectedFormat(e.target.value)}
-                style={styles.select}
-              >
-                {conversionOptions.map(format => (
-                  <option key={format} value={format}>
-                    Convert to {format}
-                  </option>
-                ))}
-              </select>
+      {/* File list */}
+      {fileInfos.length > 0 && (
+        <div style={styles.fileList}>
+          {fileInfos.map(info => (
+            <div key={info.id} style={styles.fileItem}>
+              <div style={styles.fileInfo}>
+                <span style={styles.fileName}>
+                  {info.name} ({info.format})
+                </span>
+                <button
+                  style={styles.removeButton}
+                  onClick={() => handleRemoveFile(info.id)}
+                >
+                  ×
+                </button>
+              </div>
               
-              <button 
-                onClick={handleConvert}
-                style={styles.convertButton}
-                disabled={isLoading}
-              >
-                Convert
-              </button>
+              {info.status === 'pending' ? (
+                <div style={styles.conversionControls}>
+                  <select
+                    value={info.selectedFormat}
+                    onChange={(e) => handleFormatChange(info.id, e.target.value)}
+                    style={styles.select}
+                    disabled={isLoading}
+                  >
+                    {getConversionOptions(info.format).map(format => (
+                      <option key={format} value={format}>
+                        Convert to {format}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : info.status === 'success' ? (
+                <a
+                  href={info.downloadUrl}
+                  download
+                  style={styles.downloadButton}
+                  className="fadeIn"
+                >
+                  Download {info.selectedFormat} File
+                </a>
+              ) : (
+                <p style={styles.errorText}>{info.error}</p>
+              )}
             </div>
-          )}
+          ))}
           
-          {/* Download button for converted file */}
-          {convertedFile && (
-            <a 
-              href={convertedFile.url}
-              download
-              style={styles.downloadButton}
-              className="fadeIn"
-            >
-              Download Converted File ({convertedFile.format})
-            </a>
-          )}
+          {/* Convert All button */}
+          <button
+            style={styles.convertAllButton}
+            onClick={handleConvertAll}
+            disabled={isLoading || fileInfos.length === 0}
+          >
+            Convert All Files
+          </button>
         </div>
       )}
     </div>
@@ -380,6 +431,78 @@ const styles = {
     marginTop: '10px',
     textAlign: 'center',
     fontSize: '16px',
+  },
+  fileList: {
+    width: '100%',
+    maxWidth: '600px',
+    marginTop: '20px',
+  },
+  fileItem: {
+    border: '1px solid #cccccc',
+    borderRadius: '5px',
+    padding: '10px',
+    marginBottom: '10px',
+  },
+  fileInfo: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '10px',
+  },
+  fileName: {
+    fontSize: '16px',
+    color: '#333333',
+  },
+  removeButton: {
+    backgroundColor: '#ff4444',
+    color: 'white',
+    border: 'none',
+    borderRadius: '50%',
+    width: '24px',
+    height: '24px',
+    cursor: 'pointer',
+    fontSize: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressSection: {
+    width: '100%',
+    maxWidth: '400px',
+    marginTop: '20px',
+  },
+  progressBar: {
+    width: '100%',
+    height: '20px',
+    backgroundColor: '#f0f0f0',
+    borderRadius: '10px',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+    transition: 'width 0.3s ease-in-out',
+  },
+  progressText: {
+    textAlign: 'center',
+    marginTop: '5px',
+    color: '#666666',
+  },
+  convertAllButton: {
+    backgroundColor: '#4CAF50',
+    color: 'white',
+    border: 'none',
+    padding: '12px 24px',
+    borderRadius: '5px',
+    cursor: 'pointer',
+    fontSize: '16px',
+    marginTop: '20px',
+    width: '100%',
+  },
+  errorText: {
+    color: '#ff0000',
+    margin: '5px 0',
+    fontSize: '14px',
   },
 };
 
