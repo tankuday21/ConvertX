@@ -6,16 +6,29 @@ import logging
 from pdf2docx import Converter
 from PIL import Image
 import uuid
+import tempfile
+import shutil
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__, static_folder='converted')
+app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
-# Create converted directory if it doesn't exist
-os.makedirs('converted', exist_ok=True)
+# Create a temporary directory for file processing
+TEMP_DIR = tempfile.mkdtemp()
+CONVERTED_DIR = os.path.join(TEMP_DIR, 'converted')
+os.makedirs(CONVERTED_DIR, exist_ok=True)
+
+def cleanup_files():
+    """Clean up temporary files"""
+    try:
+        if os.path.exists(TEMP_DIR):
+            shutil.rmtree(TEMP_DIR)
+            os.makedirs(CONVERTED_DIR, exist_ok=True)
+    except Exception as e:
+        logger.error(f"Error cleaning up files: {str(e)}")
 
 def convert_pdf_to_docx(input_path, output_path):
     """Convert PDF to DOCX"""
@@ -64,7 +77,7 @@ def detect_file_format():
         
         # Save the file temporarily
         filename = file.filename
-        temp_path = os.path.join(os.getcwd(), filename)
+        temp_path = os.path.join(TEMP_DIR, filename)
         file.save(temp_path)
         
         try:
@@ -110,13 +123,13 @@ def convert_file():
         
         # Save uploaded file temporarily
         input_filename = file.filename
-        input_path = os.path.join(os.getcwd(), input_filename)
+        input_path = os.path.join(TEMP_DIR, input_filename)
         file.save(input_path)
         
         try:
             # Generate unique output filename
             output_filename = f"converted_{uuid.uuid4().hex[:8]}.{output_format.lower()}"
-            output_path = os.path.join('converted', output_filename)
+            output_path = os.path.join(CONVERTED_DIR, output_filename)
             
             # Get input format
             _, input_ext = os.path.splitext(input_filename)
@@ -133,7 +146,7 @@ def convert_file():
             
             if success:
                 # Return the download URL
-                download_url = f"/converted/{output_filename}"
+                download_url = f"/download/{output_filename}"
                 return jsonify({
                     'success': True,
                     'downloadUrl': download_url,
@@ -151,18 +164,27 @@ def convert_file():
         logger.error(f"Error converting file: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/converted/<filename>')
+@app.route('/download/<filename>')
 def download_file(filename):
     """Serve converted files"""
     try:
+        file_path = os.path.join(CONVERTED_DIR, filename)
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+            
         return send_file(
-            os.path.join('converted', filename),
+            file_path,
             as_attachment=True,
             download_name=filename
         )
     except Exception as e:
         logger.error(f"Error serving file: {str(e)}")
         return jsonify({'error': 'File not found'}), 404
+
+@app.teardown_appcontext
+def cleanup(error):
+    """Clean up temporary files when the application context ends"""
+    cleanup_files()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
