@@ -59,13 +59,19 @@ function App() {
       const formData = new FormData();
       formData.append('file', file);
       
-      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/detect`, {
+      const backendUrl = process.env.REACT_APP_BACKEND_URL;
+      if (!backendUrl) {
+        throw new Error('Backend URL not configured. Please check your environment variables.');
+      }
+      
+      const response = await fetch(`${backendUrl}/detect`, {
         method: 'POST',
         body: formData,
       });
       
       if (!response.ok) {
-        throw new Error('Failed to detect file format');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to detect file format');
       }
       
       const data = await response.json();
@@ -79,7 +85,8 @@ function App() {
       setConversionOptions(options);
       setSelectedFormat(options[0] || '');
     } catch (err) {
-      setError('Error: ' + err.message);
+      console.error('Upload error:', err);
+      setError(`Error: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -97,22 +104,29 @@ function App() {
       formData.append('file', file);
       formData.append('outputFormat', selectedFormat);
       
-      const response = await fetch(`${process.env.REACT_APP_BACKEND_URL}/convert`, {
+      const backendUrl = process.env.REACT_APP_BACKEND_URL;
+      if (!backendUrl) {
+        throw new Error('Backend URL not configured. Please check your environment variables.');
+      }
+      
+      const response = await fetch(`${backendUrl}/convert`, {
         method: 'POST',
         body: formData,
       });
       
       if (!response.ok) {
-        throw new Error('Conversion failed');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Conversion failed');
       }
       
       const data = await response.json();
       setConvertedFile({
-        url: `${process.env.REACT_APP_BACKEND_URL}${data.downloadUrl}`,
+        url: `${backendUrl}${data.downloadUrl}`,
         format: selectedFormat
       });
     } catch (err) {
-      setError('Error: ' + err.message);
+      console.error('Conversion error:', err);
+      setError(`Error: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
