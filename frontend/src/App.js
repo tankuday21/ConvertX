@@ -184,10 +184,8 @@ function App() {
     setConversionResults([]);
     
     try {
-      const backendUrl = process.env.REACT_APP_BACKEND_URL;
-      if (!backendUrl) {
-        throw new Error('Backend URL not configured');
-      }
+      const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8080';
+      console.log('Using backend URL:', backendUrl);
       
       const formData = new FormData();
       fileInfos.forEach((info, index) => {
@@ -206,22 +204,30 @@ function App() {
       }
       
       const data = await response.json();
+      console.log('Conversion response:', data);
+      
+      // Calculate overall progress based on individual file progress
+      const totalProgress = Math.round(
+        data.results.reduce((sum, result) => sum + (result.progress || 0), 0) / data.results.length
+      );
+      setProgress(totalProgress);
       
       // Update file infos with results and progress
       setFileInfos(prevInfos =>
         prevInfos.map(info => {
           const result = data.results.find(r => r.filename === info.name);
+          if (!result) return info;
+          
           return {
             ...info,
             status: result.status,
             error: result.error || null,
             downloadUrl: result.downloadUrl ? `${backendUrl}${result.downloadUrl}` : null,
-            progress: result.progress
+            progress: result.progress || 0
           };
         })
       );
       
-      setProgress(100);
       setConversionResults(data.results);
     } catch (err) {
       console.error('Batch conversion error:', err);
@@ -234,23 +240,38 @@ function App() {
   // Update the download link handler
   const handleDownload = async (downloadUrl, filename) => {
     try {
-      const response = await fetch(downloadUrl);
+      console.log('Downloading from URL:', downloadUrl);
+      const response = await fetch(downloadUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': '*/*',
+        },
+      });
+      
       if (!response.ok) {
-        throw new Error('Download failed');
+        console.error('Download failed:', response.status, response.statusText);
+        const errorText = await response.text();
+        console.error('Error response:', errorText);
+        throw new Error(`Download failed: ${response.status} ${response.statusText}`);
       }
       
       // Get the blob from the response
       const blob = await response.blob();
+      console.log('Downloaded blob:', blob);
       
       // Create a temporary link and trigger download
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = filename; // Use the original filename
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      
+      // Cleanup
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 100);
     } catch (err) {
       console.error('Download error:', err);
       setError(`Error downloading file: ${err.message}`);
@@ -324,6 +345,7 @@ function App() {
                 <button
                   style={styles.removeButton}
                   onClick={() => handleRemoveFile(info.id)}
+                  disabled={isLoading}
                 >
                   ×
                 </button>
@@ -343,9 +365,9 @@ function App() {
                       </option>
                     ))}
                   </select>
-                  {isLoading && info.progress !== undefined && (
+                  {isLoading && (
                     <div style={styles.individualProgress}>
-                      Converting: {info.progress}%
+                      Converting: {info.progress || 0}%
                     </div>
                   )}
                 </div>

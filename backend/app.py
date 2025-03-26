@@ -172,9 +172,9 @@ def convert_batch():
         
         for i, file in enumerate(files):
             try:
-                # Calculate progress percentage
-                progress = int((i / total_files) * 100)
-                logger.info(f"Processing file {i+1}/{total_files} ({progress}%)")
+                # Calculate progress percentage for this file
+                current_progress = int((i / total_files) * 100)
+                logger.info(f"Processing file {i+1}/{total_files} ({current_progress}%)")
                 
                 # Get output format for this file
                 output_format = request.form.get(f'format_{i}')
@@ -198,16 +198,29 @@ def convert_batch():
                 
                 # Perform conversion
                 success = False
-                if input_format == 'PDF' and output_format == 'DOCX':
-                    success = convert_pdf_to_docx(input_path, output_path)
-                elif input_format in ['JPG', 'JPEG', 'PNG', 'BMP'] and output_format in ['PNG', 'JPG', 'JPEG']:
-                    success = convert_image(input_path, output_path, output_format)
-                else:
-                    raise ValueError(f'Conversion from {input_format} to {output_format} not supported')
+                conversion_progress = 0
+                
+                try:
+                    if input_format == 'PDF' and output_format == 'DOCX':
+                        success = convert_pdf_to_docx(input_path, output_path)
+                        conversion_progress = 100 if success else 0
+                    elif input_format in ['JPG', 'JPEG', 'PNG', 'BMP'] and output_format in ['PNG', 'JPG', 'JPEG']:
+                        success = convert_image(input_path, output_path, output_format)
+                        conversion_progress = 100 if success else 0
+                    else:
+                        raise ValueError(f'Conversion from {input_format} to {output_format} not supported')
+                except Exception as conv_err:
+                    logger.error(f"Conversion error for {file.filename}: {str(conv_err)}")
+                    success = False
+                    conversion_progress = 0
                 
                 # Schedule cleanup
                 schedule_cleanup(input_path)
-                schedule_cleanup(output_path, minutes=10)
+                if success:
+                    schedule_cleanup(output_path, minutes=10)
+                
+                # Calculate total progress including conversion
+                total_progress = int((current_progress + conversion_progress) / 2)
                 
                 if success:
                     results.append({
@@ -215,7 +228,7 @@ def convert_batch():
                         'status': 'success',
                         'downloadUrl': f"/download/{output_filename}",
                         'error': None,
-                        'progress': progress
+                        'progress': total_progress
                     })
                 else:
                     results.append({
@@ -223,7 +236,7 @@ def convert_batch():
                         'status': 'error',
                         'downloadUrl': None,
                         'error': 'Conversion failed',
-                        'progress': progress
+                        'progress': total_progress
                     })
                 
             except Exception as e:
@@ -233,11 +246,14 @@ def convert_batch():
                     'status': 'error',
                     'downloadUrl': None,
                     'error': str(e),
-                    'progress': progress
+                    'progress': current_progress
                 })
         
         # Final progress update
         logger.info("Batch conversion completed (100%)")
+        
+        # Update progress to 100% for successful conversions
+        results = [{**r, 'progress': 100} if r['status'] == 'success' else r for r in results]
         
         return jsonify({
             'success': True,
@@ -274,12 +290,28 @@ def download_file(filename):
         elif ext == '.png':
             mime_type = 'image/png'
         
-        return send_file(
-            file_path,
-            as_attachment=True,
-            download_name=filename,
-            mimetype=mime_type
-        )
+        # Log the download attempt
+        logger.info(f"Serving file: {filename} with MIME type: {mime_type}")
+        
+        try:
+            response = send_file(
+                file_path,
+                as_attachment=True,
+                download_name=filename,
+                mimetype=mime_type
+            )
+            
+            # Add CORS headers to the response
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error sending file {filename}: {str(e)}")
+            return jsonify({'error': f'Error sending file: {str(e)}'}), 500
+            
     except Exception as e:
         logger.error(f"Error serving file {filename}: {str(e)}")
         return jsonify({'error': str(e)}), 500
