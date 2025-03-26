@@ -2,11 +2,11 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google';
 import useDrivePicker from 'react-google-drive-picker';
 import { Document, Page } from 'react-pdf';
-import { pdfjs } from 'pdfjs-dist';
+import * as pdfjsLib from 'pdfjs-dist';
 import './App.css';
 
 // Initialize PDF.js worker
-pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 // Google Drive API configuration
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
