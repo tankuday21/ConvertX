@@ -20,14 +20,23 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Configure CORS with specific settings
-CORS(app, resources={
-    r"/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-    }
-})
+# Configure CORS to allow all origins and methods
+CORS(app, 
+     resources={r"/*": {
+         "origins": "*",
+         "methods": ["GET", "POST", "OPTIONS"],
+         "allow_headers": ["Content-Type", "Authorization", "Accept"],
+         "expose_headers": ["Content-Type", "Authorization"],
+         "max_age": 3600
+     }})
+
+@app.after_request
+def after_request(response):
+    """Add CORS headers to every response"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    return response
 
 try:
     # Create temporary directories in /tmp for Railway compatibility

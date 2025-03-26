@@ -11,36 +11,80 @@ function App() {
   const [convertedFile, setConvertedFile] = useState(null);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   
-  // Check backend connection on component mount
-  useEffect(() => {
-    const checkBackendConnection = async () => {
+  // Function to check backend connection with retries
+  const checkBackendConnection = async (retries = 3) => {
+    for (let i = 0; i < retries; i++) {
       try {
         const backendUrl = process.env.REACT_APP_BACKEND_URL;
         if (!backendUrl) {
           throw new Error('Backend URL not configured');
         }
         
+        console.log(`Attempting to connect to backend: ${backendUrl}`);
+        
         const response = await fetch(`${backendUrl}/`, {
           method: 'GET',
           headers: {
             'Accept': 'application/json',
-          }
+            'Content-Type': 'application/json',
+          },
+          mode: 'cors',
         });
         
         if (response.ok) {
+          console.log('Backend connection successful');
           setIsBackendConnected(true);
-        } else {
-          throw new Error('Backend health check failed');
+          setError(null);
+          return true;
         }
+        
+        throw new Error('Backend health check failed');
       } catch (err) {
-        console.error('Backend connection error:', err);
-        setError(`Backend connection error: ${err.message}`);
-        setIsBackendConnected(false);
+        console.error(`Backend connection attempt ${i + 1} failed:`, err);
+        if (i === retries - 1) {
+          setError(`Backend connection error: ${err.message}. Please refresh the page to try again.`);
+          setIsBackendConnected(false);
+        }
+        // Wait before retrying
+        if (i < retries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        }
       }
-    };
-    
+    }
+    return false;
+  };
+  
+  // Check backend connection on component mount
+  useEffect(() => {
     checkBackendConnection();
   }, []);
+  
+  // Function to make API calls with retries
+  const makeApiCall = async (url, options, retries = 2) => {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch(url, {
+          ...options,
+          mode: 'cors',
+          headers: {
+            'Accept': 'application/json',
+            ...options.headers,
+          },
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'API call failed');
+        }
+        
+        return await response.json();
+      } catch (err) {
+        console.error(`API call attempt ${i + 1} failed:`, err);
+        if (i === retries - 1) throw err;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  };
   
   // Get conversion options based on file format
   const getConversionOptions = (format) => {
@@ -93,35 +137,27 @@ function App() {
       
       const backendUrl = process.env.REACT_APP_BACKEND_URL;
       if (!backendUrl) {
-        throw new Error('Backend URL not configured. Please check your environment variables.');
+        throw new Error('Backend URL not configured');
       }
       
-      const response = await fetch(`${backendUrl}/detect`, {
+      const data = await makeApiCall(`${backendUrl}/detect`, {
         method: 'POST',
         body: formData,
-        headers: {
-          'Accept': 'application/json',
-        }
       });
       
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to detect file format');
-      }
-      
-      const data = await response.json();
       setFileInfo({
         name: file.name,
         format: data.format
       });
       
-      // Set conversion options based on detected format
       const options = getConversionOptions(data.format);
       setConversionOptions(options);
       setSelectedFormat(options[0] || '');
     } catch (err) {
       console.error('Upload error:', err);
       setError(`Error: ${err.message}`);
+      // Try to reconnect to backend
+      checkBackendConnection();
     } finally {
       setIsLoading(false);
     }
@@ -141,23 +177,14 @@ function App() {
       
       const backendUrl = process.env.REACT_APP_BACKEND_URL;
       if (!backendUrl) {
-        throw new Error('Backend URL not configured. Please check your environment variables.');
+        throw new Error('Backend URL not configured');
       }
       
-      const response = await fetch(`${backendUrl}/convert`, {
+      const data = await makeApiCall(`${backendUrl}/convert`, {
         method: 'POST',
         body: formData,
-        headers: {
-          'Accept': 'application/json',
-        }
       });
       
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Conversion failed');
-      }
-      
-      const data = await response.json();
       setConvertedFile({
         url: `${backendUrl}${data.downloadUrl}`,
         format: selectedFormat
@@ -165,6 +192,8 @@ function App() {
     } catch (err) {
       console.error('Conversion error:', err);
       setError(`Error: ${err.message}`);
+      // Try to reconnect to backend
+      checkBackendConnection();
     } finally {
       setIsLoading(false);
     }
