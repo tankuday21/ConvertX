@@ -121,13 +121,27 @@ def convert_image(input_path, output_path, output_format, quality=80):
             
             # Save with compression
             if output_format.upper() in ['JPG', 'JPEG']:
-                img.save(output_path, 'JPEG', quality=quality, optimize=True)
+                # For JPEG, quality is directly proportional (higher = better quality)
+                img.save(output_path, 'JPEG', 
+                        quality=quality,  # quality from 1 (worst) to 95 (best)
+                        optimize=True)
             elif output_format.upper() == 'PNG':
-                img.save(output_path, 'PNG', 
+                # For PNG, we need to handle compression differently
+                # PNG uses optimize and compression_level
+                # compression_level: 0 (no compression) to 9 (max compression)
+                compression_level = int((100 - quality) / 11)  # Convert quality to compression level
+                img.save(output_path, 'PNG',
                         optimize=True,
-                        quality=quality if quality < 95 else 95)  # PNG uses quality differently
+                        compression_level=compression_level)  # 0-9 (0=none, 9=max)
             else:
                 img.save(output_path, output_format.upper())
+        
+        # Log file sizes for debugging
+        original_size = os.path.getsize(input_path)
+        converted_size = os.path.getsize(output_path)
+        logger.info(f"Original size: {original_size/1024:.2f}KB")
+        logger.info(f"Converted size: {converted_size/1024:.2f}KB")
+        logger.info(f"Compression ratio: {(converted_size/original_size)*100:.2f}%")
         
         end_time = time.time()
         logger.info(f"Conversion completed in {end_time - start_time:.2f} seconds")
