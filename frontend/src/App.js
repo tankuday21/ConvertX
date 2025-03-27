@@ -24,6 +24,8 @@ function App() {
   const [previews, setPreviews] = useState({});
   const [accessToken, setAccessToken] = useState(null);
   const [conversionComplete, setConversionComplete] = useState(false);
+  const [compressionSettings, setCompressionSettings] = useState({});
+  const [pdfPreviews, setPdfPreviews] = useState({});
   
   // Google Drive Picker setup
   const [openPicker] = useDrivePicker();
@@ -265,208 +267,118 @@ function App() {
     }
   };
   
-  // Generate file preview
+  // Function to generate preview for a file
   const generatePreview = async (file) => {
     try {
       if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          setPreviews(prev => ({
-            ...prev,
-            [file.name]: e.target.result
-          }));
-        };
-        reader.readAsDataURL(file);
+        const previewUrl = URL.createObjectURL(file);
+        setPreviews(prev => ({ ...prev, [file.name]: previewUrl }));
       } else if (file.type === 'application/pdf') {
-        const url = URL.createObjectURL(file);
-        setPreviews(prev => ({
-          ...prev,
-          [file.name]: url
-        }));
+        const fileUrl = URL.createObjectURL(file);
+        const pdf = await pdfjsLib.getDocument(fileUrl).promise;
+        const page = await pdf.getPage(1);
+        const viewport = page.getViewport({ scale: 1.0 });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise;
+        const previewUrl = canvas.toDataURL();
+        setPdfPreviews(prev => ({ ...prev, [file.name]: previewUrl }));
+        URL.revokeObjectURL(fileUrl);
       }
     } catch (err) {
       console.error('Error generating preview:', err);
+      setError(`Error generating preview for ${file.name}`);
     }
   };
   
-  // Handle file upload (both local and Google Drive)
-  const handleFileUpload = async (file) => {
-    await generatePreview(file);
-    detectFileFormat(file);
-  };
-  
-  // Detect file format
+  // Update file detection to include preview generation
   const detectFileFormat = async (file) => {
     try {
-      const formData = new FormData();
-      formData.append('file', file);
+      const format = file.name.split('.').pop().toUpperCase();
+      const conversionOptions = getConversionOptions(format);
       
-      const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8080';
+      setFileInfos(prev => [
+        ...prev,
+        {
+          name: file.name,
+          format: format,
+          size: file.size,
+          outputFormat: conversionOptions[0] || '',
+          status: 'pending'
+        }
+      ]);
+
+      // Generate preview
+      await generatePreview(file);
       
-      const data = await makeApiCall(`${backendUrl}/detect`, {
-        method: 'POST',
-        body: formData,
-      });
+      // Initialize compression settings
+      if (format === 'JPG' || format === 'JPEG' || format === 'PNG') {
+        setCompressionSettings(prev => ({
+          ...prev,
+          [file.name]: { quality: 80 }
+        }));
+      } else if (format === 'PDF') {
+        setCompressionSettings(prev => ({
+          ...prev,
+          [file.name]: { level: 'medium' }
+        }));
+      }
       
-      const fileInfo = {
-        id: Math.random().toString(36).substr(2, 9),
-        file,
-        name: file.name,
-        format: data.format,
-        selectedFormat: getConversionOptions(data.format)[0] || '',
-        compression: getDefaultCompression(data.format),
-        status: 'pending',
-        error: null,
-        downloadUrl: null
-      };
-      
-      setFileInfos(prevInfos => [...prevInfos, fileInfo]);
+      setError(null);
     } catch (err) {
-      console.error('Format detection error:', err);
-      setError(`Error detecting format for ${file.name}: ${err.message}`);
+      console.error('Error detecting file format:', err);
+      setError(`Error processing ${file.name}`);
     }
   };
   
-  // Get default compression settings based on format
-  const getDefaultCompression = (format) => {
-    switch (format.toUpperCase()) {
-      case 'PDF':
-        return 'medium';
-      case 'JPG':
-      case 'JPEG':
-      case 'PNG':
-      case 'BMP':
-        return 80;
-      default:
-        return null;
-    }
+  // Handle compression setting change
+  const handleCompressionChange = (fileName, value) => {
+    setCompressionSettings(prev => ({
+      ...prev,
+      [fileName]: {
+        ...(prev[fileName] || {}),
+        ...(typeof value === 'number' ? { quality: value } : { level: value })
+      }
+    }));
   };
   
-  // Handle compression change
-  const handleCompressionChange = (id, value) => {
-    setFileInfos(prevInfos =>
-      prevInfos.map(info =>
-        info.id === id ? { ...info, compression: value } : info
-      )
-    );
-  };
-  
-  // Handle format selection change
-  const handleFormatChange = (id, format) => {
-    setFileInfos(prevInfos =>
-      prevInfos.map(info =>
-        info.id === id ? { ...info, selectedFormat: format } : info
-      )
-    );
-  };
-  
-  // Remove file from list
-  const handleRemoveFile = (id) => {
-    setFileInfos(prevInfos => prevInfos.filter(info => info.id !== id));
-    setFiles(prevFiles => prevFiles.filter((_, index) => 
-      fileInfos.findIndex(info => info.id === id) !== index
-    ));
-  };
-  
-  // Convert all files
-  const handleConvertAll = async () => {
-    if (fileInfos.length === 0) return;
-    
+  // Update the conversion function to include compression settings
+  const convertFiles = async () => {
     setIsLoading(true);
-    setError(null);
     setProgress(0);
     setConversionResults([]);
-    setConversionComplete(false);
+    setError(null);
     
     try {
-      const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8080';
-      console.log('Using backend URL:', backendUrl);
-      
       const formData = new FormData();
-      fileInfos.forEach((info, index) => {
-        formData.append('files', info.file);
-        formData.append(`format_${index}`, info.selectedFormat);
-        formData.append(`compression_${index}`, info.compression);
+      
+      files.forEach((file, index) => {
+        formData.append('files', file);
+        formData.append(`outputFormats[${index}]`, fileInfos[index].outputFormat);
+        formData.append(`compression[${index}]`, JSON.stringify(compressionSettings[file.name] || {}));
       });
       
-      const response = await fetch(`${backendUrl}/convert-batch`, {
+      const backendUrl = process.env.REACT_APP_BACKEND_URL;
+      const response = await fetch(`${backendUrl}/convert`, {
         method: 'POST',
         body: formData,
       });
       
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Conversion failed');
+        throw new Error('Conversion failed');
       }
       
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let totalProcessed = 0;
-      const totalFiles = fileInfos.length;
-      
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Split buffer by newlines to handle multiple JSON objects
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep the last incomplete line in buffer
-        
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          
-          try {
-            const data = JSON.parse(line);
-            console.log('Progress update:', data);
-            
-            // Update overall progress
-            if (data.overall_progress !== undefined) {
-              setProgress(Math.round(data.overall_progress));
-            } else if (data.processed !== undefined) {
-              // Calculate progress based on processed files
-              totalProcessed = data.processed;
-              const overallProgress = Math.round((totalProcessed / totalFiles) * 100);
-              setProgress(overallProgress);
-            }
-            
-            // Update individual file progress
-            if (data.results) {
-              setFileInfos(prevInfos =>
-                prevInfos.map(info => {
-                  const result = data.results.find(r => r.filename === info.name);
-                  if (!result) return info;
-                  
-                  return {
-                    ...info,
-                    status: result.status,
-                    error: result.error || null,
-                    downloadUrl: result.downloadUrl ? `${backendUrl}${result.downloadUrl}` : null,
-                    progress: result.progress || 0
-                  };
-                })
-              );
-            }
-            
-            // Check if all files are processed
-            if (totalProcessed === totalFiles || data.overall_progress === 100) {
-              setConversionComplete(true);
-            }
-          } catch (err) {
-            console.error('Error parsing progress update:', err, 'Line:', line);
-          }
-        }
-      }
-      
-      // Ensure progress is 100% and conversion is marked as complete
-      setProgress(100);
+      const results = await response.json();
+      setConversionResults(results);
       setConversionComplete(true);
-      
     } catch (err) {
-      console.error('Batch conversion error:', err);
-      setError(`Error converting files: ${err.message}`);
+      console.error('Error during conversion:', err);
+      setError('Conversion failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -581,7 +493,7 @@ function App() {
           {/* Individual file progress */}
           <div className="file-progress-list">
             {fileInfos.map(info => (
-              <div key={info.id} className="file-progress-item">
+              <div key={info.name} className="file-progress-item">
                 <span className="file-name">{info.name}</span>
                 <div className="file-progress-bar">
                   <div 
@@ -601,113 +513,120 @@ function App() {
       {/* File list */}
       {fileInfos.length > 0 && (
         <div className="file-list">
-          {fileInfos.map(info => (
-            <div key={info.id} className="file-item">
-              {/* Preview section */}
-              {previews[info.name] && (
-                <div className="preview-container">
-                  {info.file.type.startsWith('image/') ? (
-                    <img
-                      src={previews[info.name]}
-                      alt={info.name}
-                      className="preview-image"
-                    />
-                  ) : info.file.type === 'application/pdf' && (
-                    <Document file={previews[info.name]}>
-                      <Page pageNumber={1} width={200} />
-                    </Document>
-                  )}
-                </div>
-              )}
-              
+          {fileInfos.map((fileInfo, index) => (
+            <div key={fileInfo.name} className="file-item">
               <div className="file-info">
-                <span className="file-name">
-                  {info.name} ({info.format})
-                </span>
+                <span className="file-name">{fileInfo.name}</span>
                 <button
                   className="remove-button"
-                  onClick={() => handleRemoveFile(info.id)}
-                  disabled={isLoading}
+                  onClick={() => {
+                    setFiles(prev => prev.filter((_, i) => i !== index));
+                    setFileInfos(prev => prev.filter((_, i) => i !== index));
+                  }}
                 >
                   ×
                 </button>
               </div>
               
-              {info.status === 'pending' ? (
-                <div className="conversion-controls">
-                  <select
-                    value={info.selectedFormat}
-                    onChange={(e) => handleFormatChange(info.id, e.target.value)}
-                    className="format-select"
-                    disabled={isLoading}
-                  >
-                    {getConversionOptions(info.format).map(format => (
-                      <option key={format} value={format}>
-                        Convert to {format}
-                      </option>
-                    ))}
-                  </select>
-                  
-                  {/* Compression options */}
-                  {info.compression !== null && (
-                    <div className="compression-control">
-                      {typeof info.compression === 'number' ? (
-                        <>
-                          <label>Quality: {info.compression}%</label>
-                          <input
-                            type="range"
-                            min="10"
-                            max="100"
-                            value={info.compression}
-                            onChange={(e) => handleCompressionChange(info.id, parseInt(e.target.value))}
-                            disabled={isLoading}
-                            className="quality-slider"
-                          />
-                        </>
-                      ) : (
-                        <select
-                          value={info.compression}
-                          onChange={(e) => handleCompressionChange(info.id, e.target.value)}
-                          className="compression-select"
-                          disabled={isLoading}
-                        >
-                          <option value="low">Low Compression</option>
-                          <option value="medium">Medium Compression</option>
-                          <option value="high">High Compression</option>
-                        </select>
-                      )}
-                    </div>
-                  )}
+              {/* File Preview */}
+              {(previews[fileInfo.name] || pdfPreviews[fileInfo.name]) && (
+                <div className="preview-container">
+                  <img
+                    src={previews[fileInfo.name] || pdfPreviews[fileInfo.name]}
+                    alt={`Preview of ${fileInfo.name}`}
+                    className="preview-image"
+                  />
                 </div>
-              ) : info.status === 'success' ? (
+              )}
+              
+              <div className="conversion-controls">
+                <select
+                  className="format-select"
+                  value={fileInfo.outputFormat}
+                  onChange={(e) => {
+                    const newFileInfos = [...fileInfos];
+                    newFileInfos[index].outputFormat = e.target.value;
+                    setFileInfos(newFileInfos);
+                  }}
+                >
+                  <option value="">Select output format</option>
+                  {getConversionOptions(fileInfo.format).map(format => (
+                    <option key={format} value={format}>{format}</option>
+                  ))}
+                </select>
+                
+                {/* Compression Controls */}
+                {(fileInfo.format === 'JPG' || fileInfo.format === 'JPEG' || fileInfo.format === 'PNG') && (
+                  <div className="compression-control">
+                    <label>Quality: {compressionSettings[fileInfo.name]?.quality || 80}%</label>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      value={compressionSettings[fileInfo.name]?.quality || 80}
+                      onChange={(e) => handleCompressionChange(fileInfo.name, parseInt(e.target.value))}
+                      className="quality-slider"
+                    />
+                  </div>
+                )}
+                
+                {fileInfo.format === 'PDF' && (
+                  <div className="compression-control">
+                    <select
+                      className="compression-select"
+                      value={compressionSettings[fileInfo.name]?.level || 'medium'}
+                      onChange={(e) => handleCompressionChange(fileInfo.name, e.target.value)}
+                    >
+                      <option value="low">Low Compression</option>
+                      <option value="medium">Medium Compression</option>
+                      <option value="high">High Compression</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          
+          <button
+            className="button button-primary convert-all"
+            onClick={convertFiles}
+            disabled={isLoading || !isBackendConnected || fileInfos.length === 0}
+          >
+            {isLoading ? 'Converting...' : 'Convert All Files'}
+          </button>
+        </div>
+      )}
+      
+      {/* Conversion Results */}
+      {conversionComplete && conversionResults.length > 0 && (
+        <div className="file-list">
+          {conversionResults.map((result, index) => (
+            <div key={index} className="file-item">
+              <div className="file-info">
+                <span className="file-name">{result.filename}</span>
+                <span className={`status-${result.status}`}>
+                  {result.status}
+                </span>
+              </div>
+              {result.status === 'success' && (
                 <div className="download-section">
-                  <button
-                    onClick={() => handleDownload(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
+                  <a
+                    href={result.downloadLink}
                     className="button button-primary"
+                    download
                   >
-                    Download {info.selectedFormat} File
-                  </button>
+                    Download
+                  </a>
                   <button
-                    onClick={() => handleSaveToGoogleDrive(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
                     className="button button-secondary"
+                    onClick={() => handleSaveToGoogleDrive(result.downloadLink, result.filename)}
                   >
                     Save to Google Drive
                   </button>
                 </div>
-              ) : (
-                <p className="error-text">{info.error}</p>
               )}
             </div>
           ))}
-          
-          {/* Convert All button */}
-          <button
-            className="button button-primary convert-all"
-            onClick={handleConvertAll}
-            disabled={isLoading || fileInfos.length === 0}
-          >
-            {isLoading ? 'Converting...' : 'Convert All Files'}
-          </button>
         </div>
       )}
     </div>

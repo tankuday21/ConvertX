@@ -208,116 +208,77 @@ def detect_file_format():
         logger.error(f"Error in detect_file_format: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/convert-batch', methods=['POST'])
-def convert_batch():
-    """Endpoint to convert multiple files with compression"""
+@app.route('/convert', methods=['POST'])
+def convert_files():
+    """Endpoint to convert files with compression settings"""
     try:
-        files = request.files.getlist('files')
-        if not files:
+        if 'files' not in request.files:
             return jsonify({'error': 'No files provided'}), 400
-        
+
+        files = request.files.getlist('files')
         results = []
-        total_files = len(files)
         
         for i, file in enumerate(files):
             try:
-                # Calculate progress percentage for this file
-                current_progress = int((i / total_files) * 100)
-                logger.info(f"Processing file {i+1}/{total_files} ({current_progress}%)")
-                
                 # Get output format and compression settings
-                output_format = request.form.get(f'format_{i}')
-                compression = request.form.get(f'compression_{i}')
+                output_format = request.form.get(f'outputFormats[{i}]')
+                compression_str = request.form.get(f'compression[{i}]')
+                compression_settings = json.loads(compression_str) if compression_str else {}
                 
                 if not output_format:
                     raise ValueError(f'No output format specified for file {file.filename}')
                 
-                # Save input file with safe filename
-                safe_filename = secure_filename(file.filename)
-                input_filename = f"{uuid.uuid4().hex}_{safe_filename}"
+                # Save input file
+                input_filename = f"{uuid.uuid4().hex}_{secure_filename(file.filename)}"
                 input_path = os.path.join(UPLOAD_DIR, input_filename)
                 file.save(input_path)
+                schedule_cleanup(input_path)
                 
-                # Generate output filename preserving original name
-                name_without_ext = os.path.splitext(safe_filename)[0]
+                # Generate output filename
+                name_without_ext = os.path.splitext(secure_filename(file.filename))[0]
                 output_filename = f"{name_without_ext}_{uuid.uuid4().hex[:8]}.{output_format.lower()}"
                 output_path = os.path.join(CONVERTED_DIR, output_filename)
                 
-                # Get input format
-                _, input_ext = os.path.splitext(file.filename)
-                input_format = input_ext[1:].upper()
-                
-                # Perform conversion with compression
                 success = False
-                conversion_progress = 0
+                # Handle image conversion
+                if output_format.upper() in ['PNG', 'JPG', 'JPEG']:
+                    quality = compression_settings.get('quality', 80)
+                    success = convert_image(input_path, output_path, output_format, quality)
                 
-                try:
-                    if input_format == 'PDF' and output_format == 'DOCX':
-                        compression_level = compression or 'medium'
-                        success = convert_pdf_to_docx(input_path, output_path, compression_level)
-                        conversion_progress = 100 if success else 0
-                    elif input_format in ['JPG', 'JPEG', 'PNG', 'BMP'] and output_format in ['PNG', 'JPG', 'JPEG']:
-                        quality = int(compression) if compression else 80
-                        success = convert_image(input_path, output_path, output_format, quality)
-                        conversion_progress = 100 if success else 0
-                    else:
-                        raise ValueError(f'Conversion from {input_format} to {output_format} not supported')
-                except Exception as conv_err:
-                    logger.error(f"Conversion error for {file.filename}: {str(conv_err)}")
-                    success = False
-                    conversion_progress = 0
-                
-                # Schedule cleanup
-                schedule_cleanup(input_path)
-                if success:
-                    schedule_cleanup(output_path, minutes=10)
-                
-                # Calculate total progress including conversion
-                total_progress = int((current_progress + conversion_progress) / 2)
+                # Handle PDF to DOCX conversion
+                elif output_format.upper() == 'DOCX':
+                    compression_level = compression_settings.get('level', 'medium')
+                    success = convert_pdf_to_docx(input_path, output_path, compression_level)
                 
                 if success:
+                    # Schedule cleanup for output file
+                    schedule_cleanup(output_path)
+                    # Generate download URL
+                    download_url = f"/download/{os.path.basename(output_path)}"
                     results.append({
                         'filename': file.filename,
                         'status': 'success',
-                        'downloadUrl': f"/download/{output_filename}",
-                        'error': None,
-                        'progress': total_progress
+                        'downloadLink': download_url
                     })
                 else:
                     results.append({
                         'filename': file.filename,
                         'status': 'error',
-                        'downloadUrl': None,
-                        'error': 'Conversion failed',
-                        'progress': total_progress
+                        'error': 'Conversion failed'
                     })
                 
             except Exception as e:
-                logger.error(f"Error converting file {file.filename}: {str(e)}")
+                logger.error(f"Error processing file {file.filename}: {str(e)}")
                 results.append({
                     'filename': file.filename,
                     'status': 'error',
-                    'downloadUrl': None,
-                    'error': str(e),
-                    'progress': current_progress
+                    'error': str(e)
                 })
+                
+        return jsonify(results)
         
-        # Final progress update
-        logger.info("Batch conversion completed (100%)")
-        
-        # Update progress to 100% for successful conversions
-        results = [{**r, 'progress': 100} if r['status'] == 'success' else r for r in results]
-        
-        return jsonify({
-            'success': True,
-            'results': results,
-            'totalFiles': total_files,
-            'progress': 100,
-            'message': f'Processed {len(files)} files'
-        })
-    
     except Exception as e:
-        logger.error(f"Error in convert_batch: {str(e)}")
+        logger.error(f"Error in convert_files: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/download/<filename>')
