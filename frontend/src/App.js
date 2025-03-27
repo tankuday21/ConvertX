@@ -149,12 +149,16 @@ function App() {
       showUploadFolders: true,
       supportDrives: true,
       multiselect: true,
+      scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly',
       callbackFunction: async (data) => {
         if (data.action === 'picked') {
           const pickedFiles = data.docs;
           for (const file of pickedFiles) {
             try {
               const response = await fetch(file.downloadUrl);
+              if (!response.ok) {
+                throw new Error(`Failed to download file: ${response.statusText}`);
+              }
               const blob = await response.blob();
               const fileObject = new File([blob], file.name, { type: file.mimeType });
               handleFileUpload(fileObject);
@@ -163,6 +167,8 @@ function App() {
               setError(`Error downloading file from Google Drive: ${err.message}`);
             }
           }
+        } else if (data.action === 'cancel') {
+          console.log('User cancelled the picker');
         }
       },
     });
@@ -172,6 +178,9 @@ function App() {
   const handleSaveToGoogleDrive = async (downloadUrl, filename) => {
     try {
       const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.statusText}`);
+      }
       const blob = await response.blob();
       
       // Get the access token from the Google OAuth client
@@ -193,12 +202,14 @@ function App() {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token.access_token}`,
+          'Content-Type': 'multipart/related',
         },
         body: form,
       });
       
       if (!uploadResponse.ok) {
-        throw new Error('Failed to upload to Google Drive');
+        const errorData = await uploadResponse.json();
+        throw new Error(errorData.error?.message || 'Failed to upload to Google Drive');
       }
       
       const result = await uploadResponse.json();
