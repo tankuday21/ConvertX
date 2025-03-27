@@ -521,37 +521,37 @@ function App() {
   
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <div style={styles.container}>
-        <h1 style={styles.title}>File Format Detector & Converter</h1>
+      <div className="app-container">
+        <h1 className="title">File Format Detector & Converter</h1>
         
         {!isBackendConnected && (
-          <div style={styles.errorMessage}>
+          <div className="error-message">
             Warning: Cannot connect to backend service. Please check if the service is running.
           </div>
         )}
         
-        {/* Upload buttons */}
-        <div style={styles.uploadSection}>
+        {/* Upload section */}
+        <div className="upload-section">
           <div 
-            style={styles.dropZone}
+            className="drop-zone"
             onDrop={handleDrop}
             onDragOver={handleDragOver}
           >
-            <p style={styles.dropText}>Drop Files Here</p>
+            <p className="drop-text">Drop Files Here</p>
             
-            <div style={styles.uploadButtons}>
-              <label style={styles.browseButton}>
+            <div className="upload-buttons">
+              <label className="button button-secondary">
                 Browse Local Files
                 <input 
                   type="file" 
                   multiple
-                  style={styles.fileInput} 
+                  style={{ display: 'none' }}
                   onChange={handleFileSelect}
                 />
               </label>
               
               <button
-                style={styles.driveButton}
+                className="button button-secondary"
                 onClick={handleOpenPicker}
               >
                 Upload from Google Drive
@@ -560,37 +560,37 @@ function App() {
           </div>
         </div>
         
+        {/* Error message */}
+        {error && <p className="error-message">{error}</p>}
+        
         {/* Progress section */}
         {isLoading && (
-          <div style={styles.progressSection}>
-            <p style={styles.progressMessage}>
+          <div className="progress-section">
+            <p className="progress-message">
               {conversionComplete ? 'Conversion Complete!' : `Processing: ${progress}%`}
             </p>
-            <div style={styles.progressBarContainer}>
-              <div style={styles.progressBar}>
+            <div className="progress-container">
+              <div className="progress-bar">
                 <div 
-                  style={{
-                    ...styles.progressFill,
-                    width: `${progress}%`
-                  }}
+                  className="progress-fill"
+                  style={{ width: `${progress}%` }}
                 />
               </div>
-              <p style={styles.progressPercentage}>{progress}%</p>
+              <p className="progress-text">{progress}%</p>
             </div>
+            
             {/* Individual file progress */}
-            <div style={styles.fileProgressList}>
+            <div className="file-progress-list">
               {fileInfos.map(info => (
-                <div key={info.id} style={styles.fileProgressItem}>
-                  <span style={styles.fileProgressName}>{info.name}</span>
-                  <div style={styles.fileProgressBar}>
+                <div key={info.id} className="file-progress-item">
+                  <span className="file-name">{info.name}</span>
+                  <div className="file-progress-bar">
                     <div 
-                      style={{
-                        ...styles.fileProgressFill,
-                        width: `${info.progress || 0}%`
-                      }}
+                      className="progress-fill"
+                      style={{ width: `${info.progress || 0}%` }}
                     />
                   </div>
-                  <span style={styles.fileProgressPercentage}>
+                  <span className="progress-percentage">
                     {info.progress || 0}%
                   </span>
                 </div>
@@ -599,22 +599,19 @@ function App() {
           </div>
         )}
         
-        {/* Error message */}
-        {error && <p style={styles.errorMessage}>{error}</p>}
-        
         {/* File list */}
         {fileInfos.length > 0 && (
-          <div style={styles.fileList}>
+          <div className="file-list">
             {fileInfos.map(info => (
-              <div key={info.id} style={styles.fileItem}>
+              <div key={info.id} className="file-item">
                 {/* Preview section */}
                 {previews[info.name] && (
-                  <div style={styles.previewContainer}>
+                  <div className="preview-container">
                     {info.file.type.startsWith('image/') ? (
                       <img
                         src={previews[info.name]}
                         alt={info.name}
-                        style={styles.preview}
+                        className="preview-image"
                       />
                     ) : info.file.type === 'application/pdf' && (
                       <Document file={previews[info.name]}>
@@ -624,12 +621,12 @@ function App() {
                   </div>
                 )}
                 
-                <div style={styles.fileInfo}>
-                  <span style={styles.fileName}>
+                <div className="file-info">
+                  <span className="file-name">
                     {info.name} ({info.format})
                   </span>
                   <button
-                    style={styles.removeButton}
+                    className="remove-button"
                     onClick={() => handleRemoveFile(info.id)}
                     disabled={isLoading}
                   >
@@ -638,11 +635,11 @@ function App() {
                 </div>
                 
                 {info.status === 'pending' ? (
-                  <div style={styles.conversionControls}>
+                  <div className="conversion-controls">
                     <select
                       value={info.selectedFormat}
                       onChange={(e) => handleFormatChange(info.id, e.target.value)}
-                      style={styles.select}
+                      className="format-select"
                       disabled={isLoading}
                     >
                       {getConversionOptions(info.format).map(format => (
@@ -654,7 +651,7 @@ function App() {
                     
                     {/* Compression options */}
                     {info.compression !== null && (
-                      <div style={styles.compressionControl}>
+                      <div className="compression-control">
                         {typeof info.compression === 'number' ? (
                           <>
                             <label>Quality: {info.compression}%</label>
@@ -665,14 +662,14 @@ function App() {
                               value={info.compression}
                               onChange={(e) => handleCompressionChange(info.id, parseInt(e.target.value))}
                               disabled={isLoading}
-                              style={styles.slider}
+                              className="quality-slider"
                             />
                           </>
                         ) : (
                           <select
                             value={info.compression}
                             onChange={(e) => handleCompressionChange(info.id, e.target.value)}
-                            style={styles.select}
+                            className="compression-select"
                             disabled={isLoading}
                           >
                             <option value="low">Low Compression</option>
@@ -682,39 +679,31 @@ function App() {
                         )}
                       </div>
                     )}
-                    
-                    {isLoading && (
-                      <div style={styles.individualProgress}>
-                        Converting: {info.progress || 0}%
-                      </div>
-                    )}
                   </div>
                 ) : info.status === 'success' ? (
-                  <div style={styles.downloadSection}>
+                  <div className="download-section">
                     <button
                       onClick={() => handleDownload(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
-                      style={styles.downloadButton}
-                      className="fadeIn"
+                      className="button button-primary"
                     >
                       Download {info.selectedFormat} File
                     </button>
                     <button
                       onClick={() => handleSaveToGoogleDrive(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
-                      style={styles.driveButton}
-                      className="fadeIn"
+                      className="button button-secondary"
                     >
                       Save to Google Drive
                     </button>
                   </div>
                 ) : (
-                  <p style={styles.errorText}>{info.error}</p>
+                  <p className="error-text">{info.error}</p>
                 )}
               </div>
             ))}
             
             {/* Convert All button */}
             <button
-              style={styles.convertAllButton}
+              className="button button-primary convert-all"
               onClick={handleConvertAll}
               disabled={isLoading || fileInfos.length === 0}
             >
@@ -726,282 +715,5 @@ function App() {
     </GoogleOAuthProvider>
   );
 }
-
-// Styles
-const styles = {
-  container: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    fontFamily: 'Arial, sans-serif',
-    padding: '20px',
-  },
-  title: {
-    color: '#333333',
-    marginBottom: '20px',
-  },
-  dropZone: {
-    border: '2px dashed #cccccc',
-    borderRadius: '5px',
-    padding: '20px',
-    width: '400px',
-    height: '200px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dropText: {
-    fontSize: '18px',
-    color: '#333333',
-    marginBottom: '20px',
-  },
-  browseButton: {
-    backgroundColor: '#dddddd',
-    padding: '5px 10px',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    fontSize: '16px',
-  },
-  fileInput: {
-    display: 'none',
-  },
-  message: {
-    marginTop: '20px',
-    fontSize: '16px',
-    color: '#666666',
-  },
-  errorMessage: {
-    marginTop: '20px',
-    fontSize: '16px',
-    color: '#ff0000',
-    fontWeight: 'bold',
-  },
-  resultMessage: {
-    marginTop: '20px',
-    fontSize: '16px',
-    color: '#008000',
-    fontWeight: 'bold',
-  },
-  conversionSection: {
-    marginTop: '20px',
-    width: '100%',
-    maxWidth: '400px',
-  },
-  conversionControls: {
-    display: 'flex',
-    gap: '10px',
-    marginTop: '10px',
-  },
-  select: {
-    flex: 1,
-    padding: '8px',
-    borderRadius: '5px',
-    border: '1px solid #cccccc',
-    fontSize: '16px',
-  },
-  convertButton: {
-    backgroundColor: '#4CAF50',
-    color: 'white',
-    border: 'none',
-    padding: '8px 16px',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    fontSize: '16px',
-  },
-  downloadButton: {
-    backgroundColor: '#4CAF50',
-    color: 'white',
-    border: 'none',
-    padding: '8px 16px',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    marginTop: '8px',
-    width: '100%',
-    textAlign: 'center',
-    textDecoration: 'none',
-    display: 'block',
-  },
-  fileList: {
-    width: '100%',
-    maxWidth: '600px',
-    marginTop: '20px',
-  },
-  fileItem: {
-    border: '1px solid #cccccc',
-    borderRadius: '5px',
-    padding: '10px',
-    marginBottom: '10px',
-  },
-  fileInfo: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: '10px',
-  },
-  fileName: {
-    fontSize: '16px',
-    color: '#333333',
-  },
-  removeButton: {
-    backgroundColor: '#ff4444',
-    color: 'white',
-    border: 'none',
-    borderRadius: '50%',
-    width: '24px',
-    height: '24px',
-    cursor: 'pointer',
-    fontSize: '16px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  progressSection: {
-    width: '100%',
-    maxWidth: '600px',
-    marginTop: '20px',
-    padding: '20px',
-    backgroundColor: '#f8f9fa',
-    borderRadius: '8px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-  },
-  progressMessage: {
-    fontSize: '18px',
-    fontWeight: 'bold',
-    color: '#000000',
-    textAlign: 'center',
-    marginBottom: '15px',
-  },
-  progressBarContainer: {
-    width: '100%',
-    marginBottom: '20px',
-  },
-  progressBar: {
-    width: '100%',
-    height: '24px',
-    backgroundColor: '#cccccc',
-    borderRadius: '12px',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#4CAF50',
-    transition: 'width 0.3s ease-in-out',
-    borderRadius: '12px',
-  },
-  progressPercentage: {
-    fontSize: '16px',
-    fontWeight: 'bold',
-    color: '#000000',
-    textAlign: 'center',
-    marginTop: '8px',
-  },
-  fileProgressList: {
-    marginTop: '20px',
-  },
-  fileProgressItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    marginBottom: '10px',
-  },
-  fileProgressName: {
-    flex: '1',
-    fontSize: '14px',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  },
-  fileProgressBar: {
-    width: '150px',
-    height: '16px',
-    backgroundColor: '#cccccc',
-    borderRadius: '8px',
-    overflow: 'hidden',
-  },
-  fileProgressFill: {
-    height: '100%',
-    backgroundColor: '#4CAF50',
-    transition: 'width 0.3s ease-in-out',
-    borderRadius: '8px',
-  },
-  fileProgressPercentage: {
-    width: '40px',
-    fontSize: '14px',
-    textAlign: 'right',
-  },
-  convertAllButton: {
-    backgroundColor: '#4CAF50',
-    color: 'white',
-    border: 'none',
-    padding: '12px 24px',
-    borderRadius: '5px',
-    cursor: 'pointer',
-    fontSize: '16px',
-    marginTop: '20px',
-    width: '100%',
-  },
-  errorText: {
-    color: '#ff0000',
-    margin: '5px 0',
-    fontSize: '14px',
-  },
-  individualProgress: {
-    marginTop: '8px',
-    fontSize: '14px',
-    color: '#666666',
-  },
-  uploadSection: {
-    width: '100%',
-    maxWidth: '600px',
-    marginBottom: '20px',
-  },
-  uploadButtons: {
-    display: 'flex',
-    gap: '10px',
-    marginTop: '20px',
-  },
-  driveButton: {
-    backgroundColor: '#4285f4',
-    color: 'white',
-    border: 'none',
-    padding: '8px 16px',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '14px',
-  },
-  previewContainer: {
-    width: '200px',
-    height: '200px',
-    marginBottom: '10px',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-    borderRadius: '4px',
-    overflow: 'hidden',
-  },
-  preview: {
-    maxWidth: '100%',
-    maxHeight: '100%',
-    objectFit: 'contain',
-  },
-  compressionControl: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '5px',
-    marginTop: '10px',
-  },
-  slider: {
-    width: '100%',
-  },
-  downloadSection: {
-    display: 'flex',
-    gap: '10px',
-    marginTop: '10px',
-  },
-};
 
 export default App; 
