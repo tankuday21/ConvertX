@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { GoogleOAuthProvider, useGoogleLogin } from '@react-oauth/google';
+import { useGoogleLogin } from '@react-oauth/google';
 import useDrivePicker from 'react-google-drive-picker';
 import { Document, Page } from 'react-pdf';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -520,199 +520,197 @@ function App() {
   };
   
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <div className="app-container">
-        <h1 className="title">File Format Detector & Converter</h1>
-        
-        {!isBackendConnected && (
-          <div className="error-message">
-            Warning: Cannot connect to backend service. Please check if the service is running.
-          </div>
-        )}
-        
-        {/* Upload section */}
-        <div className="upload-section">
-          <div 
-            className="drop-zone"
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-          >
-            <p className="drop-text">Drop Files Here</p>
-            
-            <div className="upload-buttons">
-              <label className="button button-secondary">
-                Browse Local Files
-                <input 
-                  type="file" 
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={handleFileSelect}
-                />
-              </label>
-              
-              <button
-                className="button button-secondary"
-                onClick={handleOpenPicker}
-              >
-                Upload from Google Drive
-              </button>
-            </div>
-          </div>
+    <div className="app-container">
+      <h1 className="title">File Format Detector & Converter</h1>
+      
+      {!isBackendConnected && (
+        <div className="error-message">
+          Warning: Cannot connect to backend service. Please check if the service is running.
         </div>
-        
-        {/* Error message */}
-        {error && <p className="error-message">{error}</p>}
-        
-        {/* Progress section */}
-        {isLoading && (
-          <div className="progress-section">
-            <p className="progress-message">
-              {conversionComplete ? 'Conversion Complete!' : `Processing: ${progress}%`}
-            </p>
-            <div className="progress-container">
-              <div className="progress-bar">
-                <div 
-                  className="progress-fill"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="progress-text">{progress}%</p>
-            </div>
+      )}
+      
+      {/* Upload section */}
+      <div className="upload-section">
+        <div 
+          className="drop-zone"
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+        >
+          <p className="drop-text">Drop Files Here</p>
+          
+          <div className="upload-buttons">
+            <label className="button button-secondary">
+              Browse Local Files
+              <input 
+                type="file" 
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleFileSelect}
+              />
+            </label>
             
-            {/* Individual file progress */}
-            <div className="file-progress-list">
-              {fileInfos.map(info => (
-                <div key={info.id} className="file-progress-item">
-                  <span className="file-name">{info.name}</span>
-                  <div className="file-progress-bar">
-                    <div 
-                      className="progress-fill"
-                      style={{ width: `${info.progress || 0}%` }}
-                    />
-                  </div>
-                  <span className="progress-percentage">
-                    {info.progress || 0}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {/* File list */}
-        {fileInfos.length > 0 && (
-          <div className="file-list">
-            {fileInfos.map(info => (
-              <div key={info.id} className="file-item">
-                {/* Preview section */}
-                {previews[info.name] && (
-                  <div className="preview-container">
-                    {info.file.type.startsWith('image/') ? (
-                      <img
-                        src={previews[info.name]}
-                        alt={info.name}
-                        className="preview-image"
-                      />
-                    ) : info.file.type === 'application/pdf' && (
-                      <Document file={previews[info.name]}>
-                        <Page pageNumber={1} width={200} />
-                      </Document>
-                    )}
-                  </div>
-                )}
-                
-                <div className="file-info">
-                  <span className="file-name">
-                    {info.name} ({info.format})
-                  </span>
-                  <button
-                    className="remove-button"
-                    onClick={() => handleRemoveFile(info.id)}
-                    disabled={isLoading}
-                  >
-                    ×
-                  </button>
-                </div>
-                
-                {info.status === 'pending' ? (
-                  <div className="conversion-controls">
-                    <select
-                      value={info.selectedFormat}
-                      onChange={(e) => handleFormatChange(info.id, e.target.value)}
-                      className="format-select"
-                      disabled={isLoading}
-                    >
-                      {getConversionOptions(info.format).map(format => (
-                        <option key={format} value={format}>
-                          Convert to {format}
-                        </option>
-                      ))}
-                    </select>
-                    
-                    {/* Compression options */}
-                    {info.compression !== null && (
-                      <div className="compression-control">
-                        {typeof info.compression === 'number' ? (
-                          <>
-                            <label>Quality: {info.compression}%</label>
-                            <input
-                              type="range"
-                              min="10"
-                              max="100"
-                              value={info.compression}
-                              onChange={(e) => handleCompressionChange(info.id, parseInt(e.target.value))}
-                              disabled={isLoading}
-                              className="quality-slider"
-                            />
-                          </>
-                        ) : (
-                          <select
-                            value={info.compression}
-                            onChange={(e) => handleCompressionChange(info.id, e.target.value)}
-                            className="compression-select"
-                            disabled={isLoading}
-                          >
-                            <option value="low">Low Compression</option>
-                            <option value="medium">Medium Compression</option>
-                            <option value="high">High Compression</option>
-                          </select>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : info.status === 'success' ? (
-                  <div className="download-section">
-                    <button
-                      onClick={() => handleDownload(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
-                      className="button button-primary"
-                    >
-                      Download {info.selectedFormat} File
-                    </button>
-                    <button
-                      onClick={() => handleSaveToGoogleDrive(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
-                      className="button button-secondary"
-                    >
-                      Save to Google Drive
-                    </button>
-                  </div>
-                ) : (
-                  <p className="error-text">{info.error}</p>
-                )}
-              </div>
-            ))}
-            
-            {/* Convert All button */}
             <button
-              className="button button-primary convert-all"
-              onClick={handleConvertAll}
-              disabled={isLoading || fileInfos.length === 0}
+              className="button button-secondary"
+              onClick={handleOpenPicker}
             >
-              {isLoading ? 'Converting...' : 'Convert All Files'}
+              Upload from Google Drive
             </button>
           </div>
-        )}
+        </div>
       </div>
-    </GoogleOAuthProvider>
+      
+      {/* Error message */}
+      {error && <p className="error-message">{error}</p>}
+      
+      {/* Progress section */}
+      {isLoading && (
+        <div className="progress-section">
+          <p className="progress-message">
+            {conversionComplete ? 'Conversion Complete!' : `Processing: ${progress}%`}
+          </p>
+          <div className="progress-container">
+            <div className="progress-bar">
+              <div 
+                className="progress-fill"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="progress-text">{progress}%</p>
+          </div>
+          
+          {/* Individual file progress */}
+          <div className="file-progress-list">
+            {fileInfos.map(info => (
+              <div key={info.id} className="file-progress-item">
+                <span className="file-name">{info.name}</span>
+                <div className="file-progress-bar">
+                  <div 
+                    className="progress-fill"
+                    style={{ width: `${info.progress || 0}%` }}
+                  />
+                </div>
+                <span className="progress-percentage">
+                  {info.progress || 0}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {/* File list */}
+      {fileInfos.length > 0 && (
+        <div className="file-list">
+          {fileInfos.map(info => (
+            <div key={info.id} className="file-item">
+              {/* Preview section */}
+              {previews[info.name] && (
+                <div className="preview-container">
+                  {info.file.type.startsWith('image/') ? (
+                    <img
+                      src={previews[info.name]}
+                      alt={info.name}
+                      className="preview-image"
+                    />
+                  ) : info.file.type === 'application/pdf' && (
+                    <Document file={previews[info.name]}>
+                      <Page pageNumber={1} width={200} />
+                    </Document>
+                  )}
+                </div>
+              )}
+              
+              <div className="file-info">
+                <span className="file-name">
+                  {info.name} ({info.format})
+                </span>
+                <button
+                  className="remove-button"
+                  onClick={() => handleRemoveFile(info.id)}
+                  disabled={isLoading}
+                >
+                  ×
+                </button>
+              </div>
+              
+              {info.status === 'pending' ? (
+                <div className="conversion-controls">
+                  <select
+                    value={info.selectedFormat}
+                    onChange={(e) => handleFormatChange(info.id, e.target.value)}
+                    className="format-select"
+                    disabled={isLoading}
+                  >
+                    {getConversionOptions(info.format).map(format => (
+                      <option key={format} value={format}>
+                        Convert to {format}
+                      </option>
+                    ))}
+                  </select>
+                  
+                  {/* Compression options */}
+                  {info.compression !== null && (
+                    <div className="compression-control">
+                      {typeof info.compression === 'number' ? (
+                        <>
+                          <label>Quality: {info.compression}%</label>
+                          <input
+                            type="range"
+                            min="10"
+                            max="100"
+                            value={info.compression}
+                            onChange={(e) => handleCompressionChange(info.id, parseInt(e.target.value))}
+                            disabled={isLoading}
+                            className="quality-slider"
+                          />
+                        </>
+                      ) : (
+                        <select
+                          value={info.compression}
+                          onChange={(e) => handleCompressionChange(info.id, e.target.value)}
+                          className="compression-select"
+                          disabled={isLoading}
+                        >
+                          <option value="low">Low Compression</option>
+                          <option value="medium">Medium Compression</option>
+                          <option value="high">High Compression</option>
+                        </select>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : info.status === 'success' ? (
+                <div className="download-section">
+                  <button
+                    onClick={() => handleDownload(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
+                    className="button button-primary"
+                  >
+                    Download {info.selectedFormat} File
+                  </button>
+                  <button
+                    onClick={() => handleSaveToGoogleDrive(info.downloadUrl, `${info.name.split('.')[0]}.${info.selectedFormat.toLowerCase()}`)}
+                    className="button button-secondary"
+                  >
+                    Save to Google Drive
+                  </button>
+                </div>
+              ) : (
+                <p className="error-text">{info.error}</p>
+              )}
+            </div>
+          ))}
+          
+          {/* Convert All button */}
+          <button
+            className="button button-primary convert-all"
+            onClick={handleConvertAll}
+            disabled={isLoading || fileInfos.length === 0}
+          >
+            {isLoading ? 'Converting...' : 'Convert All Files'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
