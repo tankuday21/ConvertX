@@ -23,6 +23,7 @@ function App() {
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [previews, setPreviews] = useState({});
   const [accessToken, setAccessToken] = useState(null);
+  const [conversionComplete, setConversionComplete] = useState(false);
   
   // Google Drive Picker setup
   const [openPicker] = useDrivePicker();
@@ -375,6 +376,7 @@ function App() {
     setError(null);
     setProgress(0);
     setConversionResults([]);
+    setConversionComplete(false);
     
     try {
       const backendUrl = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8080';
@@ -400,6 +402,8 @@ function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let totalProcessed = 0;
+      const totalFiles = fileInfos.length;
       
       while (true) {
         const { value, done } = await reader.read();
@@ -421,6 +425,11 @@ function App() {
             // Update overall progress
             if (data.overall_progress !== undefined) {
               setProgress(Math.round(data.overall_progress));
+            } else if (data.processed !== undefined) {
+              // Calculate progress based on processed files
+              totalProcessed = data.processed;
+              const overallProgress = Math.round((totalProcessed / totalFiles) * 100);
+              setProgress(overallProgress);
             }
             
             // Update individual file progress
@@ -440,11 +449,20 @@ function App() {
                 })
               );
             }
+            
+            // Check if all files are processed
+            if (totalProcessed === totalFiles || data.overall_progress === 100) {
+              setConversionComplete(true);
+            }
           } catch (err) {
             console.error('Error parsing progress update:', err, 'Line:', line);
           }
         }
       }
+      
+      // Ensure progress is 100% and conversion is marked as complete
+      setProgress(100);
+      setConversionComplete(true);
       
     } catch (err) {
       console.error('Batch conversion error:', err);
@@ -545,16 +563,39 @@ function App() {
         {/* Progress section */}
         {isLoading && (
           <div style={styles.progressSection}>
-            <p style={styles.message}>Converting files...</p>
-            <div style={styles.progressBar}>
-              <div 
-                style={{
-                  ...styles.progressFill,
-                  width: `${progress}%`
-                }}
-              />
+            <p style={styles.progressMessage}>
+              {conversionComplete ? 'Conversion Complete!' : `Processing: ${progress}%`}
+            </p>
+            <div style={styles.progressBarContainer}>
+              <div style={styles.progressBar}>
+                <div 
+                  style={{
+                    ...styles.progressFill,
+                    width: `${progress}%`
+                  }}
+                />
+              </div>
+              <p style={styles.progressPercentage}>{progress}%</p>
             </div>
-            <p style={styles.progressText}>{progress}%</p>
+            {/* Individual file progress */}
+            <div style={styles.fileProgressList}>
+              {fileInfos.map(info => (
+                <div key={info.id} style={styles.fileProgressItem}>
+                  <span style={styles.fileProgressName}>{info.name}</span>
+                  <div style={styles.fileProgressBar}>
+                    <div 
+                      style={{
+                        ...styles.fileProgressFill,
+                        width: `${info.progress || 0}%`
+                      }}
+                    />
+                  </div>
+                  <span style={styles.fileProgressPercentage}>
+                    {info.progress || 0}%
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         
@@ -818,25 +859,78 @@ const styles = {
   },
   progressSection: {
     width: '100%',
-    maxWidth: '400px',
+    maxWidth: '600px',
     marginTop: '20px',
+    padding: '20px',
+    backgroundColor: '#f8f9fa',
+    borderRadius: '8px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+  },
+  progressMessage: {
+    fontSize: '18px',
+    fontWeight: 'bold',
+    color: '#000000',
+    textAlign: 'center',
+    marginBottom: '15px',
+  },
+  progressBarContainer: {
+    width: '100%',
+    marginBottom: '20px',
   },
   progressBar: {
     width: '100%',
-    height: '20px',
-    backgroundColor: '#f0f0f0',
-    borderRadius: '10px',
+    height: '24px',
+    backgroundColor: '#cccccc',
+    borderRadius: '12px',
     overflow: 'hidden',
+    position: 'relative',
   },
   progressFill: {
     height: '100%',
     backgroundColor: '#4CAF50',
     transition: 'width 0.3s ease-in-out',
+    borderRadius: '12px',
   },
-  progressText: {
+  progressPercentage: {
+    fontSize: '16px',
+    fontWeight: 'bold',
+    color: '#000000',
     textAlign: 'center',
-    marginTop: '5px',
-    color: '#666666',
+    marginTop: '8px',
+  },
+  fileProgressList: {
+    marginTop: '20px',
+  },
+  fileProgressItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    marginBottom: '10px',
+  },
+  fileProgressName: {
+    flex: '1',
+    fontSize: '14px',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  fileProgressBar: {
+    width: '150px',
+    height: '16px',
+    backgroundColor: '#cccccc',
+    borderRadius: '8px',
+    overflow: 'hidden',
+  },
+  fileProgressFill: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+    transition: 'width 0.3s ease-in-out',
+    borderRadius: '8px',
+  },
+  fileProgressPercentage: {
+    width: '40px',
+    fontSize: '14px',
+    textAlign: 'right',
   },
   convertAllButton: {
     backgroundColor: '#4CAF50',
