@@ -22,9 +22,23 @@ function App() {
   const [conversionResults, setConversionResults] = useState([]);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [previews, setPreviews] = useState({});
+  const [accessToken, setAccessToken] = useState(null);
   
   // Google Drive Picker setup
   const [openPicker] = useDrivePicker();
+  
+  // Google OAuth login
+  const login = useGoogleLogin({
+    onSuccess: (response) => {
+      setAccessToken(response.access_token);
+      setError(null);
+    },
+    onError: (error) => {
+      console.error('Google OAuth error:', error);
+      setError('Failed to authenticate with Google');
+    },
+    scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly',
+  });
   
   // Get conversion options based on file format
   const getConversionOptions = (format) => {
@@ -140,7 +154,12 @@ function App() {
   };
   
   // Handle Google Drive file selection
-  const handleOpenPicker = () => {
+  const handleOpenPicker = async () => {
+    if (!accessToken) {
+      await login();
+      return;
+    }
+
     openPicker({
       clientId: GOOGLE_CLIENT_ID,
       developerKey: GOOGLE_API_KEY,
@@ -154,8 +173,6 @@ function App() {
           const pickedFiles = data.docs;
           for (const file of pickedFiles) {
             try {
-              // Get the file using Google Drive API
-              const accessToken = window.gapi.auth.getToken().access_token;
               const response = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
                 headers: {
                   'Authorization': `Bearer ${accessToken}`
@@ -183,18 +200,17 @@ function App() {
   // Save file to Google Drive
   const handleSaveToGoogleDrive = async (downloadUrl, filename) => {
     try {
+      if (!accessToken) {
+        await login();
+        return;
+      }
+
       // First, download the file
       const response = await fetch(downloadUrl);
       if (!response.ok) {
         throw new Error(`Failed to download file: ${response.statusText}`);
       }
       const blob = await response.blob();
-
-      // Get the access token
-      const accessToken = window.gapi.auth.getToken()?.access_token;
-      if (!accessToken) {
-        throw new Error('Not authenticated with Google Drive');
-      }
 
       // Create the metadata
       const metadata = {
@@ -242,6 +258,9 @@ function App() {
     } catch (err) {
       console.error('Error saving to Google Drive:', err);
       setError(`Error saving to Google Drive: ${err.message}`);
+      if (err.message.includes('authentication')) {
+        await login();
+      }
     }
   };
   
@@ -380,40 +399,50 @@ function App() {
       
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
       
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         
-        const chunk = decoder.decode(value, { stream: true });
-        try {
-          const data = JSON.parse(chunk);
-          console.log('Progress update:', data);
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Split buffer by newlines to handle multiple JSON objects
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep the last incomplete line in buffer
+        
+        for (const line of lines) {
+          if (!line.trim()) continue;
           
-          // Update overall progress
-          if (data.overall_progress) {
-            setProgress(Math.round(data.overall_progress));
+          try {
+            const data = JSON.parse(line);
+            console.log('Progress update:', data);
+            
+            // Update overall progress
+            if (data.overall_progress !== undefined) {
+              setProgress(Math.round(data.overall_progress));
+            }
+            
+            // Update individual file progress
+            if (data.results) {
+              setFileInfos(prevInfos =>
+                prevInfos.map(info => {
+                  const result = data.results.find(r => r.filename === info.name);
+                  if (!result) return info;
+                  
+                  return {
+                    ...info,
+                    status: result.status,
+                    error: result.error || null,
+                    downloadUrl: result.downloadUrl ? `${backendUrl}${result.downloadUrl}` : null,
+                    progress: result.progress || 0
+                  };
+                })
+              );
+            }
+          } catch (err) {
+            console.error('Error parsing progress update:', err, 'Line:', line);
           }
-          
-          // Update individual file progress
-          if (data.results) {
-            setFileInfos(prevInfos =>
-              prevInfos.map(info => {
-                const result = data.results.find(r => r.filename === info.name);
-                if (!result) return info;
-                
-                return {
-                  ...info,
-                  status: result.status,
-                  error: result.error || null,
-                  downloadUrl: result.downloadUrl ? `${backendUrl}${result.downloadUrl}` : null,
-                  progress: result.progress || 0
-                };
-              })
-            );
-          }
-        } catch (err) {
-          console.error('Error parsing progress update:', err);
         }
       }
       
