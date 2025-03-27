@@ -149,26 +149,32 @@ function App() {
       showUploadFolders: true,
       supportDrives: true,
       multiselect: true,
-      scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly',
       callbackFunction: async (data) => {
         if (data.action === 'picked') {
           const pickedFiles = data.docs;
           for (const file of pickedFiles) {
             try {
-              const response = await fetch(file.downloadUrl);
+              // Get the file using Google Drive API
+              const accessToken = window.gapi.auth.getToken().access_token;
+              const response = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`, {
+                headers: {
+                  'Authorization': `Bearer ${accessToken}`
+                }
+              });
+
               if (!response.ok) {
                 throw new Error(`Failed to download file: ${response.statusText}`);
               }
+
               const blob = await response.blob();
               const fileObject = new File([blob], file.name, { type: file.mimeType });
-              handleFileUpload(fileObject);
+              setFiles(prevFiles => [...prevFiles, fileObject]);
+              detectFileFormat(fileObject);
             } catch (err) {
               console.error('Error downloading file from Google Drive:', err);
               setError(`Error downloading file from Google Drive: ${err.message}`);
             }
           }
-        } else if (data.action === 'cancel') {
-          console.log('User cancelled the picker');
         }
       },
     });
@@ -177,44 +183,62 @@ function App() {
   // Save file to Google Drive
   const handleSaveToGoogleDrive = async (downloadUrl, filename) => {
     try {
+      // First, download the file
       const response = await fetch(downloadUrl);
       if (!response.ok) {
         throw new Error(`Failed to download file: ${response.statusText}`);
       }
       const blob = await response.blob();
-      
-      // Get the access token from the Google OAuth client
-      const token = await window.gapi.auth.getToken();
-      if (!token || !token.access_token) {
-        throw new Error('Not authenticated with Google');
+
+      // Get the access token
+      const accessToken = window.gapi.auth.getToken()?.access_token;
+      if (!accessToken) {
+        throw new Error('Not authenticated with Google Drive');
       }
-      
+
+      // Create the metadata
       const metadata = {
         name: filename,
         mimeType: blob.type,
       };
+
+      // Create multipart request
+      const boundary = '-------314159265358979323846';
+      const delimiter = "\r\n--" + boundary + "\r\n";
+      const close_delim = "\r\n--" + boundary + "--";
+
+      const metadataContent = JSON.stringify(metadata);
       
-      const form = new FormData();
-      form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-      form.append('file', blob);
-      
-      const uploadResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token.access_token}`,
-          'Content-Type': 'multipart/related',
-        },
-        body: form,
-      });
-      
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json\r\n\r\n' +
+        metadataContent +
+        delimiter +
+        'Content-Type: ' + blob.type + '\r\n\r\n' +
+        await blob.text() +
+        close_delim;
+
+      // Upload to Google Drive
+      const uploadResponse = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': `multipart/related; boundary=${boundary}`,
+          },
+          body: multipartRequestBody,
+        }
+      );
+
       if (!uploadResponse.ok) {
         const errorData = await uploadResponse.json();
         throw new Error(errorData.error?.message || 'Failed to upload to Google Drive');
       }
-      
+
       const result = await uploadResponse.json();
       console.log('File uploaded to Google Drive:', result);
-      
+      setError(null);
+
     } catch (err) {
       console.error('Error saving to Google Drive:', err);
       setError(`Error saving to Google Drive: ${err.message}`);
@@ -354,32 +378,45 @@ function App() {
         throw new Error(errorData.error || 'Conversion failed');
       }
       
-      const data = await response.json();
-      console.log('Conversion response:', data);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
       
-      // Calculate overall progress based on individual file progress
-      const totalProgress = Math.round(
-        data.results.reduce((sum, result) => sum + (result.progress || 0), 0) / data.results.length
-      );
-      setProgress(totalProgress);
-      
-      // Update file infos with results and progress
-      setFileInfos(prevInfos =>
-        prevInfos.map(info => {
-          const result = data.results.find(r => r.filename === info.name);
-          if (!result) return info;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        try {
+          const data = JSON.parse(chunk);
+          console.log('Progress update:', data);
           
-          return {
-            ...info,
-            status: result.status,
-            error: result.error || null,
-            downloadUrl: result.downloadUrl ? `${backendUrl}${result.downloadUrl}` : null,
-            progress: result.progress || 0
-          };
-        })
-      );
+          // Update overall progress
+          if (data.overall_progress) {
+            setProgress(Math.round(data.overall_progress));
+          }
+          
+          // Update individual file progress
+          if (data.results) {
+            setFileInfos(prevInfos =>
+              prevInfos.map(info => {
+                const result = data.results.find(r => r.filename === info.name);
+                if (!result) return info;
+                
+                return {
+                  ...info,
+                  status: result.status,
+                  error: result.error || null,
+                  downloadUrl: result.downloadUrl ? `${backendUrl}${result.downloadUrl}` : null,
+                  progress: result.progress || 0
+                };
+              })
+            );
+          }
+        } catch (err) {
+          console.error('Error parsing progress update:', err);
+        }
+      }
       
-      setConversionResults(data.results);
     } catch (err) {
       console.error('Batch conversion error:', err);
       setError(`Error converting files: ${err.message}`);
