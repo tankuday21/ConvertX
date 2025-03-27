@@ -374,7 +374,12 @@ function App() {
       }
       
       const results = await response.json();
-      setConversionResults(results);
+      // Add the backend URL to the download links
+      const resultsWithFullUrls = results.map(result => ({
+        ...result,
+        downloadLink: result.downloadLink ? `${backendUrl}${result.downloadLink}` : null
+      }));
+      setConversionResults(resultsWithFullUrls);
       setConversionComplete(true);
     } catch (err) {
       console.error('Error during conversion:', err);

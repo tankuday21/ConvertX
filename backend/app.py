@@ -287,47 +287,23 @@ def download_file(filename):
     try:
         file_path = os.path.join(CONVERTED_DIR, filename)
         if not os.path.exists(file_path):
-            logger.error(f"File not found: {file_path}")
             return jsonify({'error': 'File not found'}), 404
-        
-        # Determine the correct MIME type
+
+        # Get the correct MIME type
         mime_type, _ = mimetypes.guess_type(filename)
         if not mime_type:
             mime_type = 'application/octet-stream'
-        
-        # Ensure the MIME type is set correctly for common formats
-        ext = os.path.splitext(filename)[1].lower()
-        if ext == '.docx':
-            mime_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        elif ext == '.jpg' or ext == '.jpeg':
-            mime_type = 'image/jpeg'
-        elif ext == '.png':
-            mime_type = 'image/png'
-        
-        # Log the download attempt
-        logger.info(f"Serving file: {filename} with MIME type: {mime_type}")
-        
-        try:
-            response = send_file(
-                file_path,
-                as_attachment=True,
-                download_name=filename,
-                mimetype=mime_type
-            )
-            
-            # Add CORS headers to the response
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error sending file {filename}: {str(e)}")
-            return jsonify({'error': f'Error sending file: {str(e)}'}), 500
-            
+
+        # Send file with proper MIME type and as_attachment=True
+        return send_file(
+            file_path,
+            mimetype=mime_type,
+            as_attachment=True,
+            download_name=filename
+        )
+
     except Exception as e:
-        logger.error(f"Error serving file {filename}: {str(e)}")
+        logger.error(f"Error downloading file {filename}: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 # Start periodic cleanup
